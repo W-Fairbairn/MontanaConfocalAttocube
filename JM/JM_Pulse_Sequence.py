@@ -105,7 +105,7 @@ with program() as hahn_echo:
             play("-x90" * amp(0), "NV")
             # Measure and detect the dark counts on SPCM1
             align()
-            play("laser_ON", "AOM1")
+            # play("laser_ON", "AOM1")
             measure("readout", "SPCM1", None, time_tagging.analog(times_dark, meas_len_1, counts_dark))
             save(counts_dark, counts_dark_st)  # save counts
             wait(wait_between_runs * u.ns, "AOM1")
@@ -132,11 +132,11 @@ qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name, port=qop_po
 #######################
 # Simulate or execute #
 #######################
-simulate = False
+simulate = True
 
 if simulate:
     # Simulates the QUA program for the specified duration
-    simulation_config = SimulationConfig(duration=1_000_000)  # In clock cycles = 4ns
+    simulation_config = SimulationConfig(duration=40000)  # In clock cycles = 4ns
     job = qmm.simulate(config, hahn_echo, simulation_config)
     job.get_simulated_samples().con1.plot()
     plt.show()
