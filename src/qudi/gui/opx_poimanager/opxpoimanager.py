@@ -277,7 +277,6 @@ class PoiManagerGui(GuiBase):
         super().__init__(*args, **kwargs)
 
         self._mw = None             # QMainWindow handle
-        self._opx_controller = None # Quantum Machines OPX Controller Window
         self.x_shift_plot = None    # pyqtgraph PlotDataItem for ROI history plot
         self.y_shift_plot = None    # pyqtgraph PlotDataItem for ROI history plot
         self.z_shift_plot = None    # pyqtgraph PlotDataItem for ROI history plot
@@ -295,11 +294,6 @@ class PoiManagerGui(GuiBase):
         self._markers = dict()
 
         self._mw = PoiManagerMainWindow()
-        self._opx_controller = OPXControllerWindow()
-        #change central layout inhertied from MainWindow to be custom widget
-        layout = QtWidgets.QVBoxLayout()
-        self._opx_controller.tidywidget.setLayout(layout)
-        self._opx_controller.setCentralWidget(self._opx_controller.tidywidget)
         # Configuring the dock widgets.
         self.restore_default_view()
 
@@ -333,7 +327,6 @@ class PoiManagerGui(GuiBase):
         self.__connect_control_signals_to_logic()
 
         self._mw.show()
-        self._opx_controller.show()
         return
 
     def on_deactivate(self):
@@ -345,7 +338,6 @@ class PoiManagerGui(GuiBase):
         self.__disconnect_update_signals_from_logic()
         self.__disconnect_internal_signals()
         self._mw.close()
-        self._opx_controller.close()
 
     @QtCore.Slot()
     def restore_default_view(self):
