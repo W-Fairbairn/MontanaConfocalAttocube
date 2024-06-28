@@ -1,3 +1,11 @@
+# -*- coding: utf-8 -*-
+"""
+This module contains a GUI for simple OPX logic control.
+
+Author: Alex Newman 2024
+"""
+
+
 
 import numpy as np
 import os
@@ -25,21 +33,10 @@ class OPXControllerWindow(QtWidgets.QMainWindow):
         uic.loadUi(ui_file, self)
         self.show()
 
-"""
-    This is the GUI Class for PoiManager
-
-    example config for copy-paste:
-
-    poi_manager_gui:
-        module.Class: 'poimanager.poimanagergui.PoiManagerGui'
-        options:
-            data_scan_axes: xy  #optional, default: xy
-        connect:
-            poi_manager_logic: 'poi_manager_logic'
-    """
 class OPXControllerGUI(GuiBase):
     # declare connectors
     _opx_controller_logic = Connector(name='opx_controller_logic', interface='OPXControllerLogic')
+
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-This module contains a POI Manager core class which gives capability to mark
+This module contains a OPX POI Manager core class which gives capability to mark
 points of interest, re-optimize their position, and keep track of sample drift
-over time.
+over time with the added compatibiltiy to work alongside a Quantum Machines (QM) OPX.
 
 Copyright (c) 2021, the qudi developers. See the AUTHORS.md file at the top-level directory of this
 distribution and on <https://github.com/Ulm-IQO/qudi-iqo-modules/>
@@ -12,6 +12,8 @@ This file is part of qudi.
 The file was originally written by Neverhorst and, with his consent, is adapted and transferred
 here without keeping its original history. The full history can be found at
 <https://github.com/Ulm-IQO/qudi/blob/master/logic/poi_manager_logic.py>
+
+This file has been further adapted by Alex Newman (2024) for added QM OPX support.
 
 Qudi is free software: you can redistribute it and/or modify it under the terms of
 the GNU Lesser General Public License as published by the Free Software Foundation,

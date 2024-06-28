@@ -1,3 +1,9 @@
+"""
+This module controls Quantum Machine OPX arbitrary wave generators.
+
+Author: Alex Newman 2024
+"""
+
 from qudi.core.configoption import ConfigOption
 from qudi.interface.opx_interface import OPXInterface
 
