@@ -18,7 +18,7 @@ from qudi.core.statusvariable import StatusVar
 from qudi.util.mutex import RecursiveMutex
 from qudi.util.datastorage import TextDataStorage
 
-# from qudi.opx_pulse_configurations import JM_Pulse_Sequence_Configuration
+from qudi.opx_pulse_configurations import JM_Pulse_Sequence_Configuration
 
 
 class OPXControllerLogic(LogicBase):
@@ -42,7 +42,8 @@ class OPXControllerLogic(LogicBase):
     def on_activate(self):
         """ Initialisation performed during activation of the module.
         """
-        # self._pulse_sequence_config = JM_Pulse_Sequence_Configuration()
+        self._pulse_sequence_config = JM_Pulse_Sequence_Configuration #getting pulse config
+        print(self._pulse_sequence_config.config) #printing for debug
         return
 
     def on_deactivate(self):

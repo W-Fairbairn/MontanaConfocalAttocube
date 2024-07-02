@@ -150,7 +150,7 @@ else:
         for element in elements:
             print("-" * 37 + f" Calibrates {element}")
             qm.calibrate_element(element, {NV_LO_freq: (NV_IF_freq,)})  # can provide many IFs for specific LO
-    # Send the QUA program to the OPX, which compiles and executes it
+    # Send the QUA progr                                             am to the OPX, which compiles and executes it
     # execute QUA program
     job = qm.execute(hahn_echo)
     # Get results from QUA program

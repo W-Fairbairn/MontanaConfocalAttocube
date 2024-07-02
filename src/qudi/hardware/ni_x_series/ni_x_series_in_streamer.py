@@ -38,6 +38,7 @@ except ImportError:
 from qudi.core.configoption import ConfigOption
 from qudi.util.helpers import natural_sort
 from qudi.util.constraints import ScalarConstraint
+from qudi.interface.scanning_probe_interface import ScanningProbeInterface
 from qudi.interface.data_instream_interface import DataInStreamInterface, DataInStreamConstraints
 from qudi.interface.data_instream_interface import StreamingMode, SampleTiming
 
@@ -78,7 +79,7 @@ class AnalogMultiChannelReader(_AnalogMultiChannelReader):
         return samps_per_chan_read
 
 
-class NIXSeriesInStreamer(DataInStreamInterface):
+class NIXSeriesInStreamer(DataInStreamInterface, ScanningProbeInterface):
     """
     A National Instruments device that can detect and count digital pulses and measure analog
     voltages as data stream.
