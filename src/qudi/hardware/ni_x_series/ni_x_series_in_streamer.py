@@ -864,3 +864,37 @@ class NIXSeriesInStreamer(DataInStreamInterface, ScanningProbeInterface):
         if 'dev' in term:
             term = term.split('/', 1)[-1]
         return term
+
+    def  move_relative(self, distance, velocity=None, blocking=False):
+        return
+
+    def move_absolute(self, position, velocity=None, blocking=False):
+        return
+
+    def get_position(self):
+        return
+
+    def get_target(self):
+        return
+
+    def get_scan_data(self):
+        return
+
+    def configure_scan(self, settings):
+        return
+
+    def get_constraints(self):
+        return
+
+    def reset(self):
+        return
+
+    def start_scan(self):
+        return
+
+    def stop_scan(self):
+        return
+
+    def emergency_stop(self):
+        return
+
