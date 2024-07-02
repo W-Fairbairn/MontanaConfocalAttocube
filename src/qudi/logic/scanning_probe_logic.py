@@ -213,7 +213,6 @@ class ScanningProbeLogic(LogicBase):
                     axes = settings[key].keys()
                     if axes != constr.axes.keys():
                         is_valid = False
-
             return is_valid
 
         for key, val in settings.items():

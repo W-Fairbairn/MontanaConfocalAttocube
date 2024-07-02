@@ -884,7 +884,7 @@ class NIXSeriesInStreamer(DataInStreamInterface, ScanningProbeInterface):
         return
 
     def get_constraints(self):
-        return
+        return self._constraints
 
     def reset(self):
         return
