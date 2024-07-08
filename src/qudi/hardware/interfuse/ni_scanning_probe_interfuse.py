@@ -409,7 +409,7 @@ class NiScanningProbeInterfuseBare(ScanningProbeInterface):
             with self._thread_lock_data:
                 self._scan_data.new_scan()
                 #self.log.debug(f"New scan data: {self._scan_data.data}, position {self._scan_data._position_data}")
-                self._stored_target_pos = self.bare_scanner.get_target(self) .copy()
+                self._stored_target_pos = self.bare_scanner.get_target(self).copy()
                 self.log.debug(f"Target pos at scan start: {self._stored_target_pos}")
                 self._scan_data.scanner_target_at_start = self._stored_target_pos
 
