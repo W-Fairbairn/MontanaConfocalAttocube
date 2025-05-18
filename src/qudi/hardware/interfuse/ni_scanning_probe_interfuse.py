@@ -124,6 +124,8 @@ class NiScanningProbeInterfuseBare(ScanningProbeInterface):
         self._thread_lock_cursor = Mutex()
         self._thread_lock_data = Mutex()
 
+        self._z_axis_stage_movement = False
+
         # handle to the uncorrected scanner instance, not wrapped by a potential CoordinateTransformMixin
         self.bare_scanner = NiScanningProbeInterfuseBare
 
@@ -811,7 +813,13 @@ class NiScanningProbeInterfuseBare(ScanningProbeInterface):
                     new_voltage = {self._ni_channel_mapping[ax]: self._position_to_voltage(ax, pos)
                                    for ax, pos in new_pos.items()}
 
-                    self._ni_ao().setpoints = new_voltage
+                    if self._z_axis_stage_movement:
+                        print("moving z stage")
+                    else:
+                        #This sets the voltage outputs for each channel given and for each voltage value
+                        self._ni_ao().setpoints = new_voltage
+
+                    # self._ni_ao().setpoints = new_voltage
                     #self.log.debug(f'Cursor_write_loop move to {new_pos}, Dist= {distance_to_target} '
                     #               f' to target {self._target_pos} took {1e3*(time.perf_counter()-t_start)} ms.')
 

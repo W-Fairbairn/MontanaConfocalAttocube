@@ -94,6 +94,8 @@ class ScanningProbeDummyBare(ScanningProbeInterface):
         self.__last_line = -1
         self.__update_timer = None
 
+        self._z_axis_stage_movement = None
+
         # handle to the uncorrected scanner instance, not wrapped by a potential CoordinateTransformMixin
         # that transforms to a tilted, virtual coordinate system.
         self.bare_scanner = ScanningProbeDummyBare
@@ -452,6 +454,9 @@ class ScanningProbeDummyBare(ScanningProbeInterface):
             if self._scan_data is None:
                 self.log.debug('No scan data in hardware, returning None')
                 return None
+
+            if self._z_axis_stage_movement:
+                print("moving z stage")
 
             if self.module_state() != 'idle':
                 elapsed = time.time() - self.__scan_start

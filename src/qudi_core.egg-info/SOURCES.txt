@@ -216,6 +216,7 @@ src/qudi/hardware/awg/tektronix_awg70k.py
 src/qudi/hardware/awg/tektronix_awg7k.py
 src/qudi/hardware/camera/andor/iXon897_ultra.py
 src/qudi/hardware/camera/thorlabs/thorlabs_DCx.py
+src/qudi/hardware/camera/thorlabs/uc480_h.py
 src/qudi/hardware/dig_generator/national_instruments_pulser.py
 src/qudi/hardware/dig_generator/tektronix_dtg5334.py
 src/qudi/hardware/dummy/camera_dummy.py
@@ -259,6 +260,8 @@ src/qudi/hardware/motor/motor_stage_pi.py
 src/qudi/hardware/motor/zaber_motion.py
 src/qudi/hardware/motor/zaber_motor_rotation_stage.py
 src/qudi/hardware/ni_x_series/helpers.py
+src/qudi/hardware/ni_x_series/national_instruments_x_series.py
+src/qudi/hardware/ni_x_series/national_instruments_x_series_OLD.py
 src/qudi/hardware/ni_x_series/ni_x_series_analog_output.py
 src/qudi/hardware/ni_x_series/ni_x_series_finite_sampling_input.py
 src/qudi/hardware/ni_x_series/ni_x_series_finite_sampling_io.py
@@ -287,6 +290,7 @@ src/qudi/hardware/wavemeter/high_finesse_proxy.py
 src/qudi/hardware/wavemeter/high_finesse_wavemeter.py
 src/qudi/hardware/wavemeter/high_finesse_wrapper.py
 src/qudi/interface/camera_interface.py
+src/qudi/interface/confocal_scanner_interface.py
 src/qudi/interface/data_instream_interface.py
 src/qudi/interface/fast_counter_interface.py
 src/qudi/interface/finite_sampling_input_interface.py
@@ -295,17 +299,21 @@ src/qudi/interface/finite_sampling_output_interface.py
 src/qudi/interface/microwave_interface.py
 src/qudi/interface/modulation_interface.py
 src/qudi/interface/motor_interface.py
+src/qudi/interface/odmr_counter_interface.py
 src/qudi/interface/opx_interface.py
 src/qudi/interface/pid_controller_interface.py
 src/qudi/interface/process_control_interface.py
 src/qudi/interface/pulser_interface.py
 src/qudi/interface/scanning_probe_interface.py
 src/qudi/interface/simple_laser_interface.py
+src/qudi/interface/slow_counter_interface.py
 src/qudi/interface/spectrometer_interface.py
 src/qudi/interface/switch_interface.py
 src/qudi/interface/test_interface.py
+src/qudi/interface/voltage_scanner_interface.py
 src/qudi/interface/mixins/process_control_switch.py
 src/qudi/logic/camera_logic.py
+src/qudi/logic/confocal_logic.py
 src/qudi/logic/interface_test_logic.py
 src/qudi/logic/laser_logic.py
 src/qudi/logic/laser_scanner_logic.py
