@@ -455,9 +455,6 @@ class ScanningProbeDummyBare(ScanningProbeInterface):
                 self.log.debug('No scan data in hardware, returning None')
                 return None
 
-            if self._z_axis_stage_movement:
-                print("moving z stage")
-
             if self.module_state() != 'idle':
                 elapsed = time.time() - self.__scan_start
                 line_time = self._current_scan_resolution[0] / self._current_scan_frequency
