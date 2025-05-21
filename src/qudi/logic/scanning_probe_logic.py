@@ -55,6 +55,7 @@ class ScanningProbeLogic(LogicBase):
 
     # declare connectors
     _scanner = Connector(name='scanner', interface='ScanningProbeInterface')
+    _z_stage = Connector(name='z_stage', interface='AttocubeStageInterface')
 
     # status vars
     _scan_ranges = StatusVar(name='scan_ranges', default=None)

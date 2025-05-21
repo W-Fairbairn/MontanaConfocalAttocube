@@ -404,7 +404,7 @@ class ScanningOptimizeLogic(LogicBase):
             self._sequence_index += 1
 
             # Terminate optimize sequence if finished; continue with next sequence step otherwise
-            if self._sequence_index >= len(self._scan_sequence):
+            if self._sequence_index >= len(self._scan_sequence) or 'z' in self._scan_sequence[self._sequence_index]:
                 self.stop_optimize()
             else:
                 self._sigNextSequenceStep.emit()

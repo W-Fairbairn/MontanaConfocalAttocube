@@ -94,8 +94,6 @@ class ScanningProbeDummyBare(ScanningProbeInterface):
         self.__last_line = -1
         self.__update_timer = None
 
-        self._z_axis_stage_movement = None
-
         # handle to the uncorrected scanner instance, not wrapped by a potential CoordinateTransformMixin
         # that transforms to a tilted, virtual coordinate system.
         self.bare_scanner = ScanningProbeDummyBare
