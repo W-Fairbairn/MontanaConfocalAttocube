@@ -88,7 +88,6 @@ class ScanningProbeLogic(LogicBase):
     def on_activate(self):
         """ Initialisation performed during activation of the module.
         """
-
         constr = self.scanner_constraints
         self._scan_saved_to_hist = True
 
@@ -190,6 +189,9 @@ class ScanningProbeLogic(LogicBase):
     def set_scan_settings(self, settings):
         with self._thread_lock:
             if 'range' in settings:
+                if 'z' in settings['range']:
+                    settings['range']['z'] = (self._z_stage().z_stage_range[0], self._z_stage().z_stage_range[1])
+                    self.set_target_position({'z': self._z_stage().z_pos})
                 self.set_scan_range(settings['range'])
             if 'resolution' in settings:
                 self.set_scan_resolution(settings['resolution'])

@@ -248,6 +248,10 @@ class ScannerGui(GuiBase):
 
         self.sigShowSaveDialog.connect(lambda x: self._save_dialog.show() if x else self._save_dialog.hide(),
                                        QtCore.Qt.DirectConnection)
+        #Connect Alex's signals
+        self._optimize_logic().sigZOptimizeUpdateGraph.connect(self.z_stage_optimisation_update_scan_data, QtCore.Qt.QueuedConnection)
+        self._optimize_logic().sigZStageStartup.connect(self.z_stage_startup_update_gui, QtCore.Qt.QueuedConnection)
+        self._optimize_logic().z_stage_startup_procedure()
 
         # tilt correction signals
         tilt_widget = self.tilt_correction_dockwidget
@@ -402,6 +406,7 @@ class ScannerGui(GuiBase):
             #lambda ax, pos: self._update_scan_markers(pos_dict={ax: pos}, exclude_scan=None)
             lambda ax, pos: self.set_scanner_target_position({ax: pos})
         )
+
 
         self.optimizer_dockwidget = OptimizerDockWidget(axes=self._scanning_logic().scanner_axes,
                                                         plot_dims=self._optimizer_plot_dims,
@@ -709,14 +714,18 @@ class ScannerGui(GuiBase):
 
         @param dict target_pos:
         """
-        if not self._scanner_settings_locked:
-            self.sigScannerTargetChanged.emit(target_pos, self.module_uuid)
-            # update gui with target, not actual logic values
-            # we can not rely on the execution order of the above emit
-            self.scanner_target_updated(pos_dict=target_pos, caller_id=None)
+        #if set target position is for z axis AND z axis isnt currently optmising then move stage
+        if not self._optimize_logic().z_stage_opti_true and 'z' in target_pos:
+            self._optimize_logic()._z_stage().move_absolute(target_pos['z'])
         else:
-            # refresh gui with stored values
-            self.scanner_target_updated(pos_dict=None, caller_id=None)
+            if not self._scanner_settings_locked:
+                self.sigScannerTargetChanged.emit(target_pos, self.module_uuid)
+                # update gui with target, not actual logic values
+                # we can not rely on the execution order of the above emit
+                self.scanner_target_updated(pos_dict=target_pos, caller_id=None)
+            else:
+                # refresh gui with stored values
+                self.scanner_target_updated(pos_dict=None, caller_id=None)
 
     def scanner_target_updated(self, pos_dict=None, caller_id=None):
         """
@@ -789,6 +798,16 @@ class ScannerGui(GuiBase):
                     self._update_scan_data(scan_data)
         return
 
+    def z_stage_optimisation_update_scan_data(self, opti_data):
+        #update z optimisation graph
+        self.optimizer_dockwidget.set_plot_data(x=opti_data['x'],y=opti_data['y'],axs='z')
+        return
+
+    def z_stage_startup_update_gui(self, curr_pos):
+        print("Start startup update gui")
+        self.scanner_control_dockwidget.set_range({'z' : (curr_pos - 1e-3, curr_pos + 1e-3)})
+        return
+
     @QtCore.Slot(bool, dict, object)
     def optimize_state_updated(self, is_running, optimal_position=None, fit_data=None):
         self._optimizer_state['is_running'] = is_running
@@ -804,7 +823,6 @@ class ScannerGui(GuiBase):
 
         if fit_data is not None and optimal_position is None:
             raise ValueError("Can't understand fit_data without optimal position")
-
         # Update optimal position crosshair and marker
         if isinstance(optimal_position, dict):
             scan_axs = list(optimal_position.keys())

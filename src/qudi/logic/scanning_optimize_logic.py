@@ -52,6 +52,8 @@ class ScanningOptimizeLogic(LogicBase):
 
     # declare connectors
     _scan_logic = Connector(name='scan_logic', interface='ScanningProbeLogic')
+    _z_stage = Connector(name='z_stage', interface='AttocubeStageInterface')
+    _time_tagger = Connector(name='timetagger', interface='TimeTaggerInterface')
 
     # config options
 
@@ -65,6 +67,11 @@ class ScanningOptimizeLogic(LogicBase):
     # signals
     sigOptimizeStateChanged = QtCore.Signal(bool, dict, object)
     sigOptimizeSettingsChanged = QtCore.Signal(dict)
+
+    #Alex's signals & vars for z stage
+    sigZOptimizeUpdateGraph = QtCore.Signal(dict)
+    sigZStageStartup = QtCore.Signal(float)
+
 
     _sigNextSequenceStep = QtCore.Signal()
 
@@ -119,6 +126,9 @@ class ScanningOptimizeLogic(LogicBase):
         self._scan_logic().sigScanStateChanged.connect(
             self._scan_state_changed, QtCore.Qt.QueuedConnection
         )
+
+        #z stage vars
+        self.z_stage_opti_true = False
 
     def on_deactivate(self):
         """ Reverse steps of activation
@@ -354,7 +364,6 @@ class ScanningOptimizeLogic(LogicBase):
             return
 
     def _scan_state_changed(self, is_running, data, caller_id):
-
         with self._thread_lock:
             if is_running or self.module_state() == 'idle' or caller_id != self.module_uuid:
                 return
@@ -406,6 +415,7 @@ class ScanningOptimizeLogic(LogicBase):
             # Terminate optimize sequence if finished; continue with next sequence step otherwise
             if self._sequence_index >= len(self._scan_sequence) or 'z' in self._scan_sequence[self._sequence_index]:
                 self.stop_optimize()
+                self.start_z_stage_optimize()
             else:
                 self._sigNextSequenceStep.emit()
             return
@@ -455,6 +465,52 @@ class ScanningOptimizeLogic(LogicBase):
             return (middle,), None, None
 
         return (fit_result.best_values['center'],), fit_result.best_fit, fit_result
+
+
+    def start_z_stage_optimize(self):
+        self.z_stage_opti_true = True
+
+        # move attocube stage using attocube hardware connection and read counts using time tagger connection
+        #Get current position of z stage
+        curr_pos = self._z_stage().z_pos
+        optim_ranges = [curr_pos - self._scan_range['z'] / 2, curr_pos + self._scan_range['z'] / 2]
+        self._scan_logic().set_scan_range({'z' : optim_ranges})
+        #generate some made up data - replace this with time tagger readings
+        mu, sigma = curr_pos, 10e-6  # mean and standard deviation
+        pos = np.linspace(optim_ranges[0], optim_ranges[1], self._scan_resolution['z'])
+
+        vals = (1.0 / (np.sqrt(2.0 * np.pi) * sigma) * np.exp(-np.power((pos - mu) / sigma, 2.0) / 2))
+
+        x_data = []
+        y_data = []
+        for x, y in zip(pos, vals):
+            self._z_stage().move_absolute(x)
+            x_data.append(x)
+            y_data.append(y)
+            opti_data = {'x': np.array(x_data), 'y': np.array(y_data)}
+            self._time_tagger().get_counts(10e-3)
+            self.sigZOptimizeUpdateGraph.emit(opti_data)
+
+
+
+        best_value, best_fit, fit_result = self._get_pos_from_1d_gauss_fit(opti_data['x'], opti_data['y'])
+        print("best value", best_value[0])
+        # self._scan_logic().set_target_position({'z': best_value[0]}, move_blocking=True)
+        print("scab target position set")
+
+        #move stage to best value
+        self._z_stage().move_absolute(best_value[0])
+        self.sigOptimizeStateChanged.emit(False, {'z': best_value[0]}, None)
+        print("sig optimize state emitted")
+        self.z_stage_opti_true = False
+        return
+
+    def z_stage_startup_procedure(self):
+        # get settings and current parameters so that on startup the ui is updated with stage current position
+        curr_pos = self._z_stage().get_position()
+        print("start up optimize logic", curr_pos)
+        self.sigZStageStartup.emit(curr_pos)
+        return
 
 
 class OptimizerScanSequence:
@@ -626,5 +682,4 @@ class OptimizerScanSequence:
             out_seqs = remove_1d_in_2d_axes_dupl(out_seqs)
 
         return out_seqs
-
 

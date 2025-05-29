@@ -208,6 +208,7 @@ src/qudi/gui/taskrunner/taskwidget.py
 src/qudi/gui/time_series/main_window.py
 src/qudi/gui/time_series/settings_dialog.py
 src/qudi/gui/time_series/time_series_gui.py
+src/qudi/hardware/fake_attocube_hardware.py
 src/qudi/hardware/interface_test_hardware.py
 src/qudi/hardware/awg/keysight_M3202A.py
 src/qudi/hardware/awg/keysight_m819x.py
@@ -289,6 +290,7 @@ src/qudi/hardware/wavemeter/high_finesse_constants.py
 src/qudi/hardware/wavemeter/high_finesse_proxy.py
 src/qudi/hardware/wavemeter/high_finesse_wavemeter.py
 src/qudi/hardware/wavemeter/high_finesse_wrapper.py
+src/qudi/interface/attocube_stage_interface.py
 src/qudi/interface/camera_interface.py
 src/qudi/interface/confocal_scanner_interface.py
 src/qudi/interface/data_instream_interface.py
