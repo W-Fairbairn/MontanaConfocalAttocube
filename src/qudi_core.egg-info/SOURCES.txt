@@ -212,6 +212,7 @@ src/qudi/hardware/attocube_controller.py
 src/qudi/hardware/fake_attocube_hardware.py
 src/qudi/hardware/fake_time_tagger_hardware.py
 src/qudi/hardware/interface_test_hardware.py
+src/qudi/hardware/swabian_time_tagger.py
 src/qudi/hardware/awg/keysight_M3202A.py
 src/qudi/hardware/awg/keysight_m819x.py
 src/qudi/hardware/awg/tektronix_awg5002c.py
