@@ -3,7 +3,6 @@ from qualang_tools.units import unit
 from qualang_tools.plot import interrupt_on_close
 from qualang_tools.results import progress_counter, fetching_tool
 from qualang_tools.loops import from_array
-from JM_set_octave import OctaveUnit, octave_declaration
 
 # IQ imbalance matrix
 def IQ_imbalance(g, phi):
@@ -28,17 +27,6 @@ u = unit(coerce_to_integer=True)
 qop_ip = "192.168.88.254"
 cluster_name = "Cluster_1"
 qop_port = None  # Write the QOP port if version < QOP220
-############################
-# Set octave configuration #
-############################
-octave_port = 11235  # Must be 11xxx, where xxx are the last three digits of the Octave IP address
-octave_1 = OctaveUnit("octave1", "192.168.88.1", port=80, con="con1")
-
-# Add the octaves
-octaves = [octave_1]
-# Configure the Octaves
-octave_config = octave_declaration(octaves)
-octave = "octave1"
 
 # Frequencies
 NV_IF_freq = 40 * u.MHz
@@ -80,7 +68,6 @@ laser_delay_2 = 87 * u.ns
 wait_between_runs = 1500 * u.ns
 
 config = {
-    "version": 1,
     "controllers": {
         "con1": {
             "type": "opx1",
@@ -95,61 +82,9 @@ config = {
                 4: {},  # SPCM2 - indicator
             },
             "analog_inputs": {
-                1: {"offset": -0.03695245029296875, 'gain_db': -5},  # SPCM1},  # SPCM1
+                1: {"offset": -0.03695245029296875, 'gain_db': 0},  # SPCM1},  # SPCM1
                 2: {"offset": 0},  # SPCM2
             },
-        }
-    },
-
-"octaves": {
-        octave: {
-            "RF_outputs": {
-                1: {
-                    "LO_frequency": NV_LO_freq,
-                    "LO_source": "internal",  # can be external or internal. internal is the default
-                    "output_mode": "triggered_reversed",  # can be: "always_on" / "always_off"/ "triggered" / "triggered_reversed". "always_off" is the default
-                    "gain": 10,  # can be in the range [-20 : 0.5 : 20]dB
-                },
-                2: {
-                    "LO_frequency": NV_LO_freq,
-                    "LO_source": "internal",
-                    "output_mode": "always_on",
-                    "gain": 0,
-                },
-                3: {
-                    "LO_frequency": NV_LO_freq,
-                    "LO_source": "internal",
-                    "output_mode": "always_on",
-                    "gain": 0,
-                },
-                4: {
-                    "LO_frequency": NV_LO_freq,
-                    "LO_source": "internal",
-                    "output_mode": "always_on",
-                    "gain": 0,
-                },
-                5: {
-                    "LO_frequency": NV_LO_freq,
-                    "LO_source": "internal",
-                    "output_mode": "always_on",
-                    "gain": 0,
-                },
-            },
-            "RF_inputs": {
-                1: {
-                    "LO_frequency": NV_LO_freq,
-                    "LO_source": "internal",  # internal is the default
-                    "IF_mode_I": "direct",  # can be: "direct" / "mixer" / "envelope" / "off". direct is default
-                    "IF_mode_Q": "direct",
-                },
-                2: {
-                    "LO_frequency": NV_LO_freq,
-                    "LO_source": "external",  # external is the default
-                    "IF_mode_I": "direct",
-                    "IF_mode_Q": "direct",
-                },
-            },
-            "connectivity": "con1",
         }
     },
     "elements": {
@@ -209,7 +144,7 @@ config = {
                 "long_readout": "long_readout_pulse_1",
             },
             "outputs": {"out1": ("con1", 1)},
-            "outputPulseParameters": {
+            "timeTaggingParameters": {
                 "signalThreshold": signal_threshold_1,  # ADC units
                 "signalPolarity": "Below",
                 "derivativeThreshold": -2_000,
@@ -232,7 +167,7 @@ config = {
                 "long_readout": "long_readout_pulse_2",
             },
             "outputs": {"out1": ("con1", 2)},
-            "outputPulseParameters": {
+            "timeTaggingParameters": {
                 "signalThreshold": signal_threshold_2,  # ADC units
                 "signalPolarity": "Below",
                 "derivativeThreshold": -2_000,

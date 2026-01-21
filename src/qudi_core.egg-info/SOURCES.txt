@@ -208,8 +208,11 @@ src/qudi/gui/taskrunner/taskwidget.py
 src/qudi/gui/time_series/main_window.py
 src/qudi/gui/time_series/settings_dialog.py
 src/qudi/gui/time_series/time_series_gui.py
+src/qudi/hardware/attocube_controller.py
 src/qudi/hardware/fake_attocube_hardware.py
+src/qudi/hardware/fake_time_tagger_hardware.py
 src/qudi/hardware/interface_test_hardware.py
+src/qudi/hardware/swabian_time_tagger.py
 src/qudi/hardware/awg/keysight_M3202A.py
 src/qudi/hardware/awg/keysight_m819x.py
 src/qudi/hardware/awg/tektronix_awg5002c.py
@@ -312,6 +315,7 @@ src/qudi/interface/slow_counter_interface.py
 src/qudi/interface/spectrometer_interface.py
 src/qudi/interface/switch_interface.py
 src/qudi/interface/test_interface.py
+src/qudi/interface/timetagger_interface.py
 src/qudi/interface/voltage_scanner_interface.py
 src/qudi/interface/mixins/process_control_switch.py
 src/qudi/logic/camera_logic.py
