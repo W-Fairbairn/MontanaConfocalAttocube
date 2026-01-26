@@ -26,7 +26,7 @@ from qm import SimulationConfig
 ##################
 # Parameters Definition
 n_avg = 1_000
-sampling_rate = 1000000
+sampling_rate = 100
 
 ###################
 # The QUA program #

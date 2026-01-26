@@ -43,6 +43,7 @@ with program() as counter:
             measure("readout", "SPCM1", time_tagging.analog(times, single_integration_time_ns, counts))
             # Increment the received counts
             assign(total_counts, total_counts + counts)
+
         # Save the counts
         save(total_counts, counts_st)
         assign(total_counts, 0)
@@ -82,19 +83,21 @@ else:
     # Get results from QUA program
     res_handles = job.result_handles
     counts_handle = res_handles.get("counts")
-    counts_handle.wait_for_values(1)
+    counts_handle.wait_for_values(3)
     time = []
     counts = []
     # Live plotting
     fig = plt.figure()
     interrupt_on_close(fig, job)  # Interrupts the job when closing the figure
     last_idx = 0
+
     while res_handles.is_processing():
         new_idx = counts_handle.count_so_far()
         new_counts = counts_handle.fetch(slice(last_idx, new_idx))
         last_idx = new_idx
-        counts.extend(new_counts["value"] / total_integration_time / 1000)
         time.extend(new_counts["timestamp"] / u.s)  # Convert timestamps to seconds
+        timestep = time[1]-time[0]
+        counts.extend(new_counts["value"] / timestep / 1000)
         plt.cla()
         if len(time) > 50:
             plt.plot(time[-50:], counts[-50:])

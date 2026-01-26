@@ -89,8 +89,8 @@ rf_amp = 0.1
 rf_length = 1000
 
 # Readout parameters
-signal_threshold_1 = -2_000  # ADC units, to convert to volts divide by 4096 (12 bit ADC)
-signal_threshold_2 = -2_000  # ADC units, to convert to volts divide by 4096 (12 bit ADC)
+signal_threshold_1 = -500  # ADC units, to convert to volts divide by 4096 (12 bit ADC)
+signal_threshold_2 = -500  # ADC units, to convert to volts divide by 4096 (12 bit ADC)
 
 # Delays
 detection_delay_1 = 80 * u.ns
@@ -118,7 +118,7 @@ config = {
                 4: {},  # SPCM2 - indicator
             },
             "analog_inputs": {
-                1: {"offset": 0, "gain_db": 5},  # SPCM1
+                1: {"offset": 0, 'gain_db': 0},  # SPCM1
                 2: {"offset": 0},  # SPCM2
             },
         }
@@ -183,9 +183,9 @@ config = {
             },
             "outputs": {"out1": ("con1", 1)},
             "timeTaggingParameters": {
-                "signalThreshold": signal_threshold_1,  # ADC units
-                "signalPolarity": "Below",
-                "derivativeThreshold": -2_000,
+                "signalThreshold": 0,  # ADC units
+                "signalPolarity": "Above",
+                "derivativeThreshold": -10000,
                 "derivativePolarity": "Above",
             },
             "time_of_flight": detection_delay_1,

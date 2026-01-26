@@ -29,7 +29,7 @@ from pathlib import Path
 #   Parameters   #
 ##################
 # Parameters Definition
-t_vec = np.arange(4, 250, 10)  # The wait time vector in clock cycles (4ns)
+t_vec = np.arange(4, 10000, 100)  # The wait time vector in clock cycles (4ns)
 n_avg = 1_000_000  # The number averaging iterations
 start_from_one = False
 
@@ -61,60 +61,34 @@ with program() as T1:
     n_st = declare_stream()  # stream to save iterations
 
     # Spin initialization
-    play("laser_ON", "AOM2")
-    wait(wait_for_initialization * u.ns, "AOM2")
+    #play("laser_ON", "AOM2")
+    #wait(wait_for_initialization * u.ns, "AOM2")
 
     # T1 sequence
     with for_(n, 0, n < n_avg, n + 1):
         with for_(*from_array(t, t_vec)):
-            # Measure in |0>
-            if start_from_one:  # Choose to start either from |0> or |1>
-                play("x180" * amp(1), "NV")
-            wait(t, "NV")  # variable delay before measurement
-            # To measure in |0> keeping the sequence time constant
-            play("x180" * amp(0), "NV")
-            align()  # Play the laser pulse after the mw sequence
-            # Measure and detect the photons on SPCM1
+            #align("AOM2", "SPCM1")
             play("laser_ON", "AOM2")
-            measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
-            #print(counts)
-            save(counts, counts_1_st)  # save counts
-            # Measure reference photon counts at end of laser pulse
-            if reference_readout:
-                wait(reference_wait, "SPCM1")
-                measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
-            else:
-                assign(counts, 1)
-            save(counts, counts_1_ref_st)
+            #measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
+            #save(counts, counts_1_st)  # save counts
+            #wait(wait_between_runs * u.ns, "AOM2")
 
-            wait(wait_between_runs * u.ns, "AOM2")
+            wait(t)  # variable delay in spin Echo
 
-            align()
-            # Measure in |1>
-            if start_from_one:  # Choose to start either from |0> or |1>
-                play("x180" * amp(1), "NV")
-            wait(t, "NV")  # variable delay in spin Echo
-            # To measure in |1>
-            play("x180" * amp(1), "NV")
-            align()  # Play the laser pulse after the mw sequence
-            # Measure and detect the photons on SPCM1
+            align("AOM2", "SPCM1")
+
             play("laser_ON", "AOM2")
             measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
             save(counts, counts_2_st)  # save counts
-            # Measure reference photon counts at end of laser p
-            assign(counts, 1)
-            save(counts, counts_2_ref_st)
-
-            wait(wait_between_runs * u.ns, "AOM2")
 
         save(n, n_st)  # save number of iteration inside for_loop
 
     with stream_processing():
         # Cast the data into a 1D vector, average the 1D vectors together and store the results on the OPX processor
-        counts_1_st.buffer(len(t_vec)).average().save("counts1")
-        counts_1_ref_st.buffer(len(t_vec)).average().save("counts1_ref")
+        #counts_1_st.buffer(len(t_vec)).average().save("counts1")
+        #counts_1_ref_st.buffer(len(t_vec)).average().save("counts1_ref")
         counts_2_st.buffer(len(t_vec)).average().save("counts2")
-        counts_2_ref_st.buffer(len(t_vec)).average().save("counts2_ref")
+        #counts_2_ref_st.buffer(len(t_vec)).average().save("counts2_ref")
         n_st.save("iteration")
 
 #####################################
@@ -125,11 +99,11 @@ qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name)
 #######################
 # Simulate or execute #
 #######################
-simulate = False
+simulate = True
 
 if simulate:
     # Simulates the QUA program for the specified duration
-    simulation_config = SimulationConfig(duration=10_000)  # In clock cycles = 4ns
+    simulation_config = SimulationConfig(duration=30_000)  # In clock cycles = 4ns
     # Simulate blocks python until the simulation is done
     job = qmm.simulate(config, T1, simulation_config)
     # Get the simulated samples
@@ -149,7 +123,7 @@ else:
     job = qm.execute(T1)
     # Get results from QUA program
     results = fetching_tool(
-        job, data_list=["counts1", "counts1_ref", "counts2", "counts2_ref", "iteration"], mode="live"
+        job, data_list=["counts2", "iteration"], mode="live"
     )
     # Live plotting
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
@@ -157,38 +131,39 @@ else:
 
     while results.is_processing():
         # Fetch results
-        counts1, counts1_ref, counts2, counts2_ref, iteration = results.fetch_all()
+        #counts1, counts1_ref, counts2, counts2_ref, iteration = results.fetch_all()
+        counts2, iteration = results.fetch_all()
         # Compute normalized signals
         #print(qmm.version())
-        norm1 = counts1 / counts1_ref
-        norm2 = counts2 / counts2_ref
-        diff = norm1 - norm2
+        #norm1 = counts1 #/ counts1_ref
+        norm2 = counts2 #/ counts2_ref
+        #diff = norm1 - norm2
         # Progress bar
         progress_counter(iteration, n_avg, start_time=results.get_start_time())
 
         # Plot data
         ax1.cla()
-        ax1.plot(4 * t_vec, norm1, label="counts in |0>")
+        #ax1.plot(4 * t_vec, norm1, label="counts in |0>")
         ax1.plot(4 * t_vec, norm2, label="counts in |1>")
-        ax1.set_ylabel("Norm. Signal")
-        ax1.set_title("Ramsey")
+        ax1.set_ylabel("Signal")
+        ax1.set_title("T1 Decay")
         ax1.legend()
 
-        ax2.cla()
-        ax2.plot(4 * t_vec, diff, color="black", label="Difference")
+        #ax2.cla()
+        #ax2.plot(4 * t_vec, diff, color="black", label="Difference")
         ax2.set_xlabel("Wait time [ns]")
-        ax2.set_ylabel("ΔSignal")
-        ax2.legend()
+        #ax2.set_ylabel("ΔSignal")
+        #ax2.legend()
         plt.pause(0.1)
 
     # Save results
     script_name = Path(__file__).name
     data_handler = DataHandler(root_data_folder="C:/Users/attocube/Documents/MontanaQudiAttocube/MontanaConfocalAttocube/JM/save_dir")
-    save_data_dict.update({"counts1_data": counts1})
-    save_data_dict.update({"counts1_ref_data": counts1_ref})
-    save_data_dict.update({"normalized1_data": norm1})
+    #save_data_dict.update({"counts1_data": counts1})
+    #save_data_dict.update({"counts1_ref_data": counts1_ref})
+    #save_data_dict.update({"normalized1_data": norm1})
     save_data_dict.update({"counts2_data": counts2})
-    save_data_dict.update({"counts2_ref_data": counts2_ref})
-    save_data_dict.update({"normalized2_data": norm2})
+    #save_data_dict.update({"counts2_ref_data": counts2_ref})
+    #save_data_dict.update({"normalized2_data": norm2})
     #data_handler.additional_files = {script_name: script_name, **default_additional_files}
     data_handler.save_data(data=save_data_dict, name="_".join(script_name.split("_")[1:]).split(".")[0])
