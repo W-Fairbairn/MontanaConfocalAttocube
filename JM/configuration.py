@@ -63,7 +63,7 @@ NV_LO_freq = 2.83 * u.GHz
 # Pulses lengths
 initialization_len_1 = 3000 * u.ns
 meas_len_1 = 500 * u.ns
-long_meas_len_1 = 5_000 * u.ns
+long_meas_len_1 = 4000 * u.ns
 
 initialization_len_2 = 3000 * u.ns
 meas_len_2 = 500 * u.ns
