@@ -90,7 +90,7 @@ class PsatLogic(LogicBase):
             time.sleep(0.5)
             counts = self._time_tagger().get_counts()
             fluorescence_array.append(counts)
-            if counts >= 1e6:
+            if counts >= 10e6:
                 print("counts too high")
                 self.set_power('ao3', 0)
                 break

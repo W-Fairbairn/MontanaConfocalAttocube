@@ -40,7 +40,7 @@ with program() as counter:
             # Play the laser pulse...
             play("laser_ON", "AOM2", duration=single_integration_time_cycles)
             # ... while measuring the events from the SPCM
-            measure("readout", "SPCM1", time_tagging.analog(times, single_integration_time_ns, counts))
+            measure("readout_pulse_1", "SPCM1", time_tagging.analog(times, single_integration_time_ns, counts))
             # Increment the received counts
             assign(total_counts, total_counts + counts)
 
