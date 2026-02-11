@@ -20,6 +20,7 @@ You should have received a copy of the GNU Lesser General Public License along w
 If not, see <https://www.gnu.org/licenses/>.
 """
 import time
+from multiprocessing.connection import Client
 
 import numpy as np
 from PySide2 import QtCore
@@ -74,6 +75,7 @@ class ScanningOptimizeLogic(LogicBase):
 
 
     _sigNextSequenceStep = QtCore.Signal()
+
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -349,6 +351,15 @@ class ScanningOptimizeLogic(LogicBase):
             return 0
 
     def _next_sequence_step(self):
+        try:
+            address = ('localhost', 6000)
+            self.conn = Client(address, authkey=b'secret password')
+            self.conn.send('start')
+            time.sleep(0.1)
+        except Exception as e:
+            print(e)
+            print("No connection to client, wont stop pulsed measurement")
+
         with self._thread_lock:
 
             if self.module_state() == 'idle':
@@ -606,6 +617,12 @@ class ScanningOptimizeLogic(LogicBase):
         self.sigOptimizeStateChanged.emit(False, {'z': self._z_stage().get_position(1)}, test)
         print("sig optimize state emitted")
         self.z_stage_opti_true = False
+        try:
+            self.conn.send('stop')
+            print("sent message to client to start pulsed measurement")
+        except Exception as e:
+            print(e)
+            print("failed to send message to client to start pulsed measurement")
         return
 
     def z_stage_startup_procedure(self):

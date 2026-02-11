@@ -56,10 +56,14 @@ octave_config = None
 
 sampling_rate = int(1e9)  # needed in some scripts
 
+AOM_delay = 950 // 4  # in clock cycles, to be adjusted to have the laser pulse start at the right time with respect to the detection window
+Measurement_delay = 70 // 4  # in clock cycles, to be adjusted to have the detection window start at the right time with respect to the laser pulse
+
 # Frequencies
 NV_IF_freq = 40 * u.MHz
 NV_LO_freq = 2.83 * u.GHz
 
+refocus_len = 30000 * u.ns
 # Pulses lengths
 initialization_len_1 = 3000 * u.ns
 meas_len_1 = 500 * u.ns
@@ -166,6 +170,7 @@ config = {
             },
             "operations": {
                 "laser_ON": "laser_ON_2",
+                "refocusing": "laser_ON_refocusing",
             },
         },
         "SPCM1": {
@@ -259,6 +264,11 @@ config = {
         "laser_ON_1": {
             "operation": "control",
             "length": initialization_len_1,
+            "digital_marker": "ON",
+        },
+        "laser_ON_refocusing": {
+            "operation": "control",
+            "length": refocus_len,
             "digital_marker": "ON",
         },
         "laser_ON_2": {
