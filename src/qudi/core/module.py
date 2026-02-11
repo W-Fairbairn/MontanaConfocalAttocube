@@ -471,3 +471,4 @@ class GuiBase(Base):
             except:
                 self.log.exception('Unable to restore window state:')
         return False
+

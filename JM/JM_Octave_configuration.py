@@ -14,7 +14,7 @@ qop_port = None  # Write the QOP port if version < QOP220
 # Set octave configuration #
 ############################
 octave_port = 11235  # Must be 11xxx, where xxx are the last three digits of the Octave IP address
-octave_1 = OctaveUnit("octave1", "192.168.88.234", port=80, con="con1")
+octave_1 = OctaveUnit("octave1", "192.168.88.", port=80, con="con1")
 
 # Add the octaves
 octaves = [octave_1]

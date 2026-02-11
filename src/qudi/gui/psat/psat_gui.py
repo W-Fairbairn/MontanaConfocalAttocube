@@ -48,10 +48,10 @@ class PsatGUI(GuiBase):
     def setPower(self):
         laser_power = self._mw.powerValueSpinBox.value()
         print("trying to set power to", laser_power)
-        self.logic.set_power('ao0', laser_power)
+        self.logic.set_power('ao3', laser_power)
 
     def psatRun(self):
-        counts, voltage  = self.logic.psatRun()
+        counts, voltage = self.logic.psatRun()
         self._mw.testGraph.plot(voltage, counts)
         return
 
