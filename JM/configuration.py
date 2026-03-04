@@ -5,6 +5,8 @@ from qualang_tools.plot import interrupt_on_close
 from qualang_tools.results import progress_counter, fetching_tool
 from qualang_tools.loops import from_array
 import plotly.io as pio
+from JM_set_octave import OctaveUnit, octave_declaration
+
 
 pio.renderers.default = "browser"
 
@@ -48,11 +50,23 @@ default_additional_files = {
     "optimal_weights.npz": "optimal_weights.npz",
 }
 
+
+# Set octave_config to None if no octave is present
+############################
+# Set octave configuration #
+############################
+octave_port = 11252  # Must be 11xxx, where xxx are the last three digits of the Octave IP address
+octave_1 = OctaveUnit("oct1", "192.168.88.252", port=80, con="con1")
+
+# Add the octaves
+octaves = [octave_1]
+# Configure the Octaves
+octave_config = octave_declaration(octaves)
+octave = "oct1"
+
 #####################
 # OPX configuration #
 #####################
-# Set octave_config to None if no octave is present
-octave_config = None
 
 sampling_rate = int(1e9)  # needed in some scripts
 
@@ -127,6 +141,57 @@ config = {
             },
         }
     },
+    "octaves": {
+            octave: {
+                "RF_outputs": {
+                    1: {
+                        "LO_frequency": NV_LO_freq,
+                        "LO_source": "internal",  # can be external or internal. internal is the default
+                        "output_mode": "triggered_reversed",  # can be: "always_on" / "always_off"/ "triggered" / "triggered_reversed". "always_off" is the default
+                        "gain": 10,  # can be in the range [-20 : 0.5 : 20]dB
+                    },
+                    2: {
+                        "LO_frequency": NV_LO_freq,
+                        "LO_source": "internal",
+                        "output_mode": "always_on",
+                        "gain": 0,
+                    },
+                    3: {
+                        "LO_frequency": NV_LO_freq,
+                        "LO_source": "internal",
+                        "output_mode": "always_on",
+                        "gain": 0,
+                    },
+                    4: {
+                        "LO_frequency": NV_LO_freq,
+                        "LO_source": "internal",
+                        "output_mode": "always_on",
+                        "gain": 0,
+                    },
+                    5: {
+                        "LO_frequency": NV_LO_freq,
+                        "LO_source": "internal",
+                        "output_mode": "always_on",
+                        "gain": 0,
+                    },
+                },
+                "RF_inputs": {
+                    1: {
+                        "LO_frequency": NV_LO_freq,
+                        "LO_source": "internal",  # internal is the default
+                        "IF_mode_I": "direct",  # can be: "direct" / "mixer" / "envelope" / "off". direct is default
+                        "IF_mode_Q": "direct",
+                    },
+                    2: {
+                        "LO_frequency": NV_LO_freq,
+                        "LO_source": "external",  # external is the default
+                        "IF_mode_I": "direct",
+                        "IF_mode_Q": "direct",
+                    },
+                },
+                "connectivity": "con1",
+            }
+        },
     "elements": {
         "NV": {
             "mixInputs": {"I": ("con1", 1), "Q": ("con1", 2), "lo_frequency": NV_LO_freq, "mixer": "mixer_NV"},
@@ -188,9 +253,9 @@ config = {
             },
             "outputs": {"out1": ("con1", 1)},
             "timeTaggingParameters": {
-                "signalThreshold": 0,  # ADC units
+                "signalThreshold": 5,  # ADC units
                 "signalPolarity": "Above",
-                "derivativeThreshold": -10000,
+                "derivativeThreshold": 50,
                 "derivativePolarity": "Above",
             },
             "time_of_flight": detection_delay_1,

@@ -27,3 +27,7 @@ class FakeAttocubeANC350(AttocubeStageInterface):
 
     def get_position(self):
         return self.z_pos
+
+    def stop(self):
+        """Stop motion (dummy implementation)."""
+        return

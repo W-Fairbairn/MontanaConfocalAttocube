@@ -26,6 +26,9 @@ import numpy as np
 from pathlib import Path
 import threading
 from multiprocessing.connection import Listener
+import sys
+import signal
+
 
 ##################
 #   Parameters   #
@@ -173,7 +176,7 @@ if simulate:
     # Visualize and save the waveform report
     waveform_report.create_plot(samples, plot=True, save_path=str(Path(__file__).resolve()))
 else:
-    # Open the quantum machine
+    # Open quantum machine and execute program
     qm = qmm.open_qm(config, close_other_machines=True)
     qm.set_io1_value(False)  # Ensure IO1 is low at the start of the program (not paused)
     job = qm.execute(T1)  # start the job
@@ -183,6 +186,8 @@ else:
     )
     t2 = threading.Thread(target=receive_signal, daemon=True)  # Thread to receive pause/resume signals from external script, set as daemon to ensure it closes when main thread closes
     t2.start()
+
+
 
     # Live plotting
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2)  # , sharex=True
@@ -243,6 +248,7 @@ else:
         job, data_list=["raw_counts", "raw_counts_ref"], mode="wait_for_all"
     )
     raw_counts, raw_counts_ref = results_raw.fetch_all()
+
     # Save results
     script_name = Path(__file__).name
     data_handler = DataHandler(root_data_folder='C:/Users/attocube/Documents/MontanaQudiAttocube/MontanaConfocalAttocube/JM/save_dir')

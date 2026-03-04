@@ -56,6 +56,7 @@ class ScanningProbeLogic(LogicBase):
     # declare connectors
     _scanner = Connector(name='scanner', interface='ScanningProbeInterface')
     _z_stage = Connector(name='z_stage', interface='AttocubeStageInterface')
+    _time_tagger = Connector(name='timetagger', interface='TimeTaggerInterface')
 
     # status vars
     _scan_ranges = StatusVar(name='scan_ranges', default=None)
@@ -72,6 +73,9 @@ class ScanningProbeLogic(LogicBase):
     sigScanSettingsChanged = QtCore.Signal(dict)
     sigTiltCorrSettingsChanged = QtCore.Signal(dict)
 
+    # hard-limit for stage Z (meters)
+    _stage_z_hard_max = 3.5e-3
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -84,6 +88,8 @@ class ScanningProbeLogic(LogicBase):
         self._curr_caller_id = self.module_uuid
         self._tilt_corr_transform = None
         self._tilt_corr_axes = []
+        # holds synthetic scan data for stage-driven z scans (so scan_widget can plot it)
+        self._stage_z_scan_data = None
 
     def on_activate(self):
         """ Initialisation performed during activation of the module.
@@ -189,9 +195,8 @@ class ScanningProbeLogic(LogicBase):
     def set_scan_settings(self, settings):
         with self._thread_lock:
             if 'range' in settings:
-                if 'z' in settings['range']:
-                    settings['range']['z'] = (self._z_stage().z_stage_range[0], self._z_stage().z_stage_range[1])
-                    self.set_target_position({'z': self._z_stage().z_pos})
+                # Don't override user-provided z range; just apply via set_scan_range.
+                # (Previously this forced z to the full stage range and made the GUI snap back.)
                 self.set_scan_range(settings['range'])
             if 'resolution' in settings:
                 self.set_scan_resolution(settings['resolution'])
@@ -299,6 +304,23 @@ class ScanningProbeLogic(LogicBase):
 
     def set_target_position(self, pos_dict, caller_id=None, move_blocking=False):
         with self._thread_lock:
+            # Enforce hard upper limit for Z target when using the external stage.
+            if isinstance(pos_dict, dict) and 'z' in pos_dict:
+                try:
+                    z = float(pos_dict['z'])
+                    if z > self._stage_z_hard_max:
+                        z = self._stage_z_hard_max
+                    # also clip against stage-reported range if available
+                    try:
+                        z_min, z_max = self._z_stage().z_stage_range
+                        z = max(float(z_min), min(float(z_max), z))
+                    except Exception:
+                        pass
+                    pos_dict = cp.copy(pos_dict)
+                    pos_dict['z'] = z
+                except Exception:
+                    pass
+
             if self.module_state() != 'idle':
                 self.log.error('Unable to change scanner target position while a scan is running.')
                 new_pos = self._scanner().get_target()
@@ -497,6 +519,13 @@ class ScanningProbeLogic(LogicBase):
                 return 0
 
             scan_axes = tuple(scan_axes)
+
+            # Special case: 1D z scan driven by the external z stage (Attocube)
+            # This bypasses the scanner hardware's buffered scan and instead creates ScanData
+            # so the existing ('z',) scan_widget can display the result.
+            if scan_axes == ('z',):
+                return self._start_stage_z_scan(caller_id=caller_id)
+
             self._curr_caller_id = self.module_uuid if caller_id is None else caller_id
 
             self.module_state.lock()
@@ -532,8 +561,145 @@ class ScanningProbeLogic(LogicBase):
             self.__start_timer()
             return 0
 
+    def _start_stage_z_scan(self, caller_id=None):
+        """Run a long-range z scan (0..3000 µm) by stepping the Attocube stage and reading counts.
+
+        The resulting data is emitted via sigScanStateChanged using scan axis ('z',) so it is
+        displayed in the regular z scan_widget (not the optimizer widget).
+        """
+        # mark scan as running in the same way as other scans
+        self._curr_caller_id = self.module_uuid if caller_id is None else caller_id
+        # IMPORTANT: allow loop to run
+        self.__scan_stop_requested = False
+        self.module_state.lock()
+
+        try:
+            # Determine channel to plot: default to first available scanner channel name
+            channels = self.scanner_channels
+            if not channels:
+                raise RuntimeError('No scanner channels defined; cannot create z scan data')
+            channel_name = next(iter(channels.keys()))
+
+            # Use GUI-configured range/resolution for z
+            try:
+                start_m, stop_m = (float(self._scan_ranges['z'][0]), float(self._scan_ranges['z'][1]))
+            except Exception:
+                # fallback to hardware constraints if not configured
+                z_ax = self.scanner_constraints.axes['z']
+                start_m, stop_m = float(z_ax.value_range[0]), float(z_ax.value_range[1])
+
+            # Hard clamp to stage max
+            start_m = min(start_m, self._stage_z_hard_max)
+            stop_m = min(stop_m, self._stage_z_hard_max)
+
+            if stop_m < start_m:
+                start_m, stop_m = stop_m, start_m
+
+            try:
+                n_points = int(self._scan_resolution.get('z', 301))
+            except Exception:
+                n_points = 301
+            n_points = max(2, n_points)
+
+            z_positions = np.linspace(start_m, stop_m, n_points)
+
+            # hardcoded averaging per point
+            avg_n = 3
+
+            # acquire stage-driven counts via timetagger
+            counts = np.full(n_points, np.nan, dtype=float)
+            stage_failures = 0
+            for i, z in enumerate(z_positions):
+                if self.__scan_stop_requested:
+                    break
+
+                try:
+                    self._z_stage().move_absolute(float(z))
+                    stage_failures = 0
+                except Exception:
+                    stage_failures += 1
+                    self.log.exception('Failed to move z_stage during z scan')
+                    # Abort quickly if stage comms are failing
+                    if stage_failures >= 2:
+                        self.__scan_stop_requested = True
+                        try:
+                            if hasattr(self._z_stage(), 'stop'):
+                                self._z_stage().stop()
+                        except Exception:
+                            pass
+                        break
+                    # otherwise skip this point
+                    continue
+
+                try:
+                    samples = []
+                    for _ in range(max(1, int(avg_n))):
+                        samples.append(float(self._time_tagger().get_counts()))
+                    counts[i] = float(np.nanmean(samples))
+                except Exception:
+                    self.log.exception('Failed to read timetagger counts during z scan')
+                    counts[i] = np.nan
+
+                # Emit incremental ScanData for live plotting
+                scan_range = ((start_m, stop_m),)
+                scan_resolution = (n_points,)
+                scan_frequency = float(self._scan_frequency.get('z', 1.0))
+
+                sd = self._make_stage_z_scan_data(
+                    channel_name=channel_name,
+                    scan_range=scan_range,
+                    scan_resolution=scan_resolution,
+                    scan_frequency=scan_frequency,
+                    counts=counts.copy(),
+                )
+                self._stage_z_scan_data = sd
+                self.sigScanStateChanged.emit(True, sd, self._curr_caller_id)
+
+            # ensure GUI sees that scan stopped
+            if self._stage_z_scan_data is None:
+                # emit at least an empty scan so gui toggles correctly
+                scan_range = ((start_m, stop_m),)
+                scan_resolution = (n_points,)
+                scan_frequency = float(self._scan_frequency.get('z', 1.0))
+                self._stage_z_scan_data = self._make_stage_z_scan_data(
+                    channel_name=channel_name,
+                    scan_range=scan_range,
+                    scan_resolution=scan_resolution,
+                    scan_frequency=scan_frequency,
+                    counts=counts.copy(),
+                )
+
+            self.sigScanStateChanged.emit(False, self._stage_z_scan_data, self.module_uuid)
+            return 0
+
+        finally:
+            self.__scan_stop_requested = True
+            self.module_state.unlock()
+
+    def _make_stage_z_scan_data(self, channel_name, scan_range, scan_resolution, scan_frequency, counts):
+        """Create a ScanData object matching the normal scan_widget expectations for a 1D z scan."""
+        from qudi.interface.scanning_probe_interface import ScanData
+
+        # minimal ScanData compatible with scan_widget: supply channel list + axis list derived from constraints
+        constr = self.scanner_constraints
+        z_axis = constr.axes['z']
+        ch_obj = constr.channels[channel_name]
+
+        sd = ScanData(
+            channels=[ch_obj],
+            scan_axes=[z_axis],
+            scan_range=scan_range,
+            scan_resolution=scan_resolution,
+            scan_frequency=scan_frequency,
+            target_at_start=self.scanner_target,
+        )
+        sd.data = {channel_name: counts}
+        return sd
+
     def stop_scan(self):
         with self._thread_lock:
+            # allow stage-driven z scan loop to stop
+            self.__scan_stop_requested = True
             if self.module_state() == 'idle':
                 self.sigScanStateChanged.emit(False, self.scan_data, self._curr_caller_id)
                 return 0

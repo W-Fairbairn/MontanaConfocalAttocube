@@ -4,24 +4,28 @@ The program consists in playing a laser pulse while performing time tagging cont
 This allows measuring the received photons as a function of time while adjusting external parameters
 to validate the experimental set-up.
 """
-
+import numpy as np
 from qm import QuantumMachinesManager
 from qm.qua import *
 from qm import SimulationConfig
 import matplotlib.pyplot as plt
 from configuration import *
 from qualang_tools.results.data_handler import DataHandler
-
+from math import log10, ceil, floor
+#import seaborn as sns
+from qbstyles import mpl_style
+mpl_style(dark=True)
+def round_to_1(x):
+    if x != 0:
+        return round(x, -int(floor(log10(abs(x)))))
+    else:
+        return 0
 ##################
 #   Parameters   #
 ##################
 # Parameters Definition
-total_integration_time = int(100 * u.ms)  # Total duration of the measurement
-# Duration of a single chunk. Needed because the OPX cannot measure for more than ~1ms
-single_integration_time_ns = int(500 * u.us)  # 500us
-single_integration_time_cycles = single_integration_time_ns // 4
-# Number of chunks to get the total measurement time
-n_count = int(total_integration_time / single_integration_time_ns)
+n_count = 3000
+meas_len = meas_len_1
 
 ###################
 # The QUA program #
@@ -38,9 +42,10 @@ with program() as counter:
         # Loop over the chunks to measure for the total integration time
         with for_(n, 0, n < n_count, n + 1):
             # Play the laser pulse...
-            play("laser_ON", "AOM2", duration=single_integration_time_cycles)
+            play("laser_ON", "AOM2")
+            play("laser_ON", "AOM1")
             # ... while measuring the events from the SPCM
-            measure("readout_pulse_1", "SPCM1", time_tagging.analog(times, single_integration_time_ns, counts))
+            measure("readout", "SPCM1", time_tagging.analog(times, meas_len, counts))
             # Increment the received counts
             assign(total_counts, total_counts + counts)
 
@@ -78,14 +83,14 @@ if simulate:
     waveform_report.create_plot(samples, plot=True, save_path=str(Path(__file__).resolve()))
 else:
     qm = qmm.open_qm(config, close_other_machines=True)
-
     job = qm.execute(counter)
     # Get results from QUA program
     res_handles = job.result_handles
     counts_handle = res_handles.get("counts")
-    counts_handle.wait_for_values(3)
+    counts_handle.wait_for_values(5)
     time = []
     counts = []
+    points = 1000
     # Live plotting
     fig = plt.figure()
     interrupt_on_close(fig, job)  # Interrupts the job when closing the figure
@@ -95,16 +100,38 @@ else:
         new_idx = counts_handle.count_so_far()
         new_counts = counts_handle.fetch(slice(last_idx, new_idx))
         last_idx = new_idx
-        time.extend(new_counts["timestamp"] / u.s)  # Convert timestamps to seconds
-        timestep = time[1]-time[0]
-        counts.extend(new_counts["value"] / timestep / 1000)
-        plt.cla()
-        if len(time) > 50:
-            plt.plot(time[-50:], counts[-50:])
-        else:
-            plt.plot(time, counts)
 
+        time.extend(new_counts["timestamp"] / 1E9)  # Convert timestamps to seconds
+        counts.extend(new_counts["value"] / (meas_len*1E-9*n_count) / 1000) # Convert counts to kcps
+        #print(new_counts["value"])
+        #print(new_counts["timestamp"] / 1E9)
+        #print("\n")
+        plt.cla()
+        if len(time) > points:
+            counts = counts[-points:]
+            time = time[-points:]
+
+        average_counts = np.average(counts[-20:])  # Average of the last 20 counts
+        if average_counts >= 1000:
+            unit = "Mcps"
+            average_counts /= 1000
+        elif average_counts < 1:
+            unit = "cps"
+            average_counts *= 1000
+        else:
+            unit = "kcps"
+        rolling_av_array = [sum(counts[max(0, i-9):i+1]) / min(10, i+1) for i in range(len(counts))]
+
+        plt.plot(time[10:-10], counts[10:-10], 'b-', label='Counts')
+        plt.plot(time[10:-10], rolling_av_array[10:-10], 'r-', label=f'Average: {average_counts:.2f} {unit}')
+        upper_bound = max(counts)*1.1
+        lower_bound = min(counts)*0.9
+        if lower_bound == upper_bound:
+            upper_bound += 5
+
+        plt.ylim(lower_bound, upper_bound)
         plt.xlabel("Time [s]")
         plt.ylabel("Counts [kcps]")
         plt.title("Counter")
-        plt.pause(0.1)
+        plt.legend(loc='upper right')
+        plt.pause(0.01)
