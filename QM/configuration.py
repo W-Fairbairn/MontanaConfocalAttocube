@@ -1,11 +1,11 @@
 from pathlib import Path
 import numpy as np
 from qualang_tools.units import unit
+from qualang_tools.loops import from_array
 from qualang_tools.plot import interrupt_on_close
 from qualang_tools.results import progress_counter, fetching_tool
-from qualang_tools.loops import from_array
 import plotly.io as pio
-from JM_set_octave import OctaveUnit, octave_declaration
+from MontanaConfocalAttocube.QM.Old_test_scrips.Set_octave import OctaveUnit, octave_declaration
 
 
 pio.renderers.default = "browser"
@@ -38,11 +38,14 @@ qop_ip = "192.168.88.254"  # Write the OPX IP address
 cluster_name = "Cluster_1"  # Write your cluster_name if version >= QOP220
 qop_port = None  # Write the QOP port if version < QOP220
 
+# Directory that contains QM/calibration_db.json (used by QuantumMachinesManager)
+calibration_db_dir = Path(__file__).resolve().parent
+
 #############
 # Save Path #
 #############
 # Path to save data
-save_dir = Path(__file__).parent.resolve() / "Data"
+save_dir = Path(__file__).parent.resolve() / "save_dir"
 save_dir.mkdir(exist_ok=True)
 
 default_additional_files = {
@@ -70,12 +73,11 @@ octave = "oct1"
 
 sampling_rate = int(1e9)  # needed in some scripts
 
-AOM_delay = 950 // 4  # in clock cycles, to be adjusted to have the laser pulse start at the right time with respect to the detection window
-Measurement_delay = 70 // 4  # in clock cycles, to be adjusted to have the detection window start at the right time with respect to the laser pulse
+
 
 # Frequencies
-NV_IF_freq = 40 * u.MHz
-NV_LO_freq = 2.83 * u.GHz
+NV_IF_freq = 50 * u.MHz
+NV_LO_freq = 2.87 * u.GHz
 
 refocus_len = 30000 * u.ns
 # Pulses lengths
@@ -85,7 +87,7 @@ long_meas_len_1 = 4000 * u.ns
 
 initialization_len_2 = 3000 * u.ns
 meas_len_2 = 500 * u.ns
-long_meas_len_2 = 5_000 * u.ns
+long_meas_len_2 = 3000 * u.ns
 
 # Relaxation time from the metastable state to the ground state after during initialization
 relaxation_time = 300 * u.ns
@@ -96,7 +98,7 @@ mw_amp_NV = 0.2  # in units of volts
 mw_len_NV = 100 * u.ns
 
 x180_amp_NV = 0.1  # in units of volts
-x180_len_NV = 32  # in units of ns
+x180_len_NV = 500  # in units of ns
 
 x90_amp_NV = x180_amp_NV / 2  # in units of volts
 x90_len_NV = x180_len_NV  # in units of ns
@@ -110,6 +112,8 @@ rf_length = 1000
 signal_threshold_1 = -500  # ADC units, to convert to volts divide by 4096 (12 bit ADC)
 signal_threshold_2 = -500  # ADC units, to convert to volts divide by 4096 (12 bit ADC)
 
+AOM_delay = 950 // 4  # in clock cycles, to be adjusted to have the laser pulse start at the right time with respect to the detection window
+Measurement_delay = 70 // 4  # in clock cycles, to be adjusted to have the detection window start at the right time with respect to the laser pulse
 # Delays
 detection_delay_1 = 80 * u.ns
 detection_delay_2 = 80 * u.ns
@@ -118,6 +122,8 @@ laser_delay_2 = 0 * u.ns
 mw_delay = 0 * u.ns
 rf_delay = 0 * u.ns
 
+#initialization_len_2 = 9000 * u.ns
+#long_meas_len_1 = 10000 * u.ns
 
 wait_between_runs = 100
 
@@ -127,7 +133,6 @@ config = {
             "analog_outputs": {
                 1: {"offset": 0.0, "delay": mw_delay},  # NV I
                 2: {"offset": 0.0, "delay": mw_delay},  # NV Q
-                3: {"offset": 0.0, "delay": rf_delay},  # RF
             },
             "digital_outputs": {
                 1: {},  # AOM/Laser
@@ -147,7 +152,7 @@ config = {
                     1: {
                         "LO_frequency": NV_LO_freq,
                         "LO_source": "internal",  # can be external or internal. internal is the default
-                        "output_mode": "triggered_reversed",  # can be: "always_on" / "always_off"/ "triggered" / "triggered_reversed". "always_off" is the default
+                        "output_mode": 'always_on',  # can be: "always_on" / "always_off"/ "triggered" / "triggered_reversed". "always_off" is the default
                         "gain": 10,  # can be in the range [-20 : 0.5 : 20]dB
                     },
                     2: {
@@ -194,7 +199,7 @@ config = {
         },
     "elements": {
         "NV": {
-            "mixInputs": {"I": ("con1", 1), "Q": ("con1", 2), "lo_frequency": NV_LO_freq, "mixer": "mixer_NV"},
+            "RF_inputs": {"port": ("oct1", 1)},
             "intermediate_frequency": NV_IF_freq,
             "operations": {
                 "cw": "const_pulse",
@@ -204,13 +209,6 @@ config = {
                 "-y90": "-y90_pulse",
                 "y90": "y90_pulse",
                 "y180": "y180_pulse",
-            },
-        },
-        "RF": {
-            "singleInput": {"port": ("con1", 3)},
-            "intermediate_frequency": rf_frequency,
-            "operations": {
-                "const": "const_pulse_single",
             },
         },
         "AOM1": {
@@ -250,12 +248,13 @@ config = {
             "operations": {
                 "readout": "readout_pulse_1",
                 "long_readout": "long_readout_pulse_1",
+                "long_readout_2": "long_readout_pulse_2",
             },
             "outputs": {"out1": ("con1", 1)},
             "timeTaggingParameters": {
-                "signalThreshold": 5,  # ADC units
+                "signalThreshold": 2,  # ADC units
                 "signalPolarity": "Above",
-                "derivativeThreshold": 50,
+                "derivativeThreshold": 25,
                 "derivativePolarity": "Above",
             },
             "time_of_flight": detection_delay_1,
@@ -378,9 +377,19 @@ config = {
         "ON": {"samples": [(1, 0)]},  # [(on/off, ns)]
         "OFF": {"samples": [(0, 0)]},  # [(on/off, ns)]
     },
-    "mixers": {
-        "mixer_NV": [
-            {"intermediate_frequency": NV_IF_freq, "lo_frequency": NV_LO_freq, "correction": IQ_imbalance(0.0, 0.0)},
-        ],
+    "integration_weights": {
+        "cosine_weights": {
+            "cosine": [(1.0, 1000)],
+            "sine": [(0.0, 1000)],
+        },
+        "sine_weights": {
+            "cosine": [(0.0, 1000)],
+            "sine": [(1.0, 1000)],
+        },
+        "minus_sine_weights": {
+            "cosine": [(0.0, 1000)],
+            "sine": [(-1.0, 1000)],
+        },
     },
+
 }

@@ -9,11 +9,18 @@ from JM_Octave_configuration import *
 from qm import SimulationConfig
 import time
 import matplotlib.pyplot as plt
+from pathlib import Path
 
 ###################################
 # Open Communication with the QOP #
 ###################################
-qmm = QuantumMachinesManager(host=qop_ip, port=qop_port, octave=octave_config)
+calibration_db_dir = Path(__file__).resolve().parents[1]  # QM/
+qmm = QuantumMachinesManager(
+    host=qop_ip,
+    port=qop_port,
+    octave=octave_config,
+    octave_calibration_db_path=calibration_db_dir,
+)
 
 ###################
 # The QUA program #
@@ -64,4 +71,3 @@ else:
     #In this case, we've put a 10 seconds sleep and then halted the job.
     time.sleep(10)
     job.halt()
-

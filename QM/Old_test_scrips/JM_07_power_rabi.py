@@ -1,19 +1,19 @@
 """
-        TIME RABI
+        POWER RABI
 The program consists in playing a mw pulse and measure the photon counts received by the SPCM
-across varying mw pulse durations.
+across varying mw pulse amplitudes.
 The sequence is repeated without playing the mw pulses to measure the dark counts on the SPCM.
 
-The data is then post-processed to determine the pi pulse duration for the specified amplitude.
+The data is then post-processed to determine the pi pulse amplitude for the specified duration.
 
 Prerequisites:
     - Ensure calibration of the different delays in the system (calibrate_delays).
     - Having updated the different delays in the configuration.
     - Having updated the NV frequency, labeled as "NV_IF_freq", in the configuration.
-    - Set the desired pi pulse amplitude, labeled as "mw_amp_NV", in the configuration
+    - Set the desired pi pulse duration, labeled as "mw_len_NV", in the configuration
 
 Next steps before going to the next node:
-    - Update the pi pulse duration, labeled as "mw_len_NV", in the configuration.
+    - Update the pi pulse amplitude, labeled as "mw_amp_NV", in the configuration.
 """
 from qm import QuantumMachinesManager
 from qm.qua import *
@@ -24,33 +24,34 @@ from JM_Pulse_Sequence_Configuration import *
 from qualang_tools.loops import from_array
 from qm.octave import ClockMode
 import numpy as np
+from pathlib import Path
 
 
 ###################
 # The QUA program #
 ###################
 
-t_vec = np.arange(4, 400, 1)  # Pulse durations in clock cycles (4ns)
-n_avg = 1_000_000  # Number of averaging loops
+a_vec = np.arange(0.1, 1, 0.02)  # The amplitude pre-factor vector
+n_avg = 1_000_000  # number of iterations
 
-with program() as time_rabi:
+with program() as power_rabi:
     counts = declare(int)  # variable for number of counts
+    times = declare(int, size=100)  # QUA vector for storing the time-tags
+    a = declare(fixed)  # variable to sweep over the amplitude
+    n = declare(int)  # variable to for_loop
     counts_st = declare_stream()  # stream for counts
     counts_dark_st = declare_stream()  # stream for counts
-    times = declare(int, size=100)  # QUA vector for storing the time-tags
-    t = declare(int)  # variable to sweep over in time
-    n = declare(int)  # variable to for_loop
     n_st = declare_stream()  # stream to save iterations
 
     # Spin initialization
     play("laser_ON", "AOM1")
     wait(wait_for_initialization * u.ns, "AOM1")
 
-    # Time Rabi sweep
+    # Power Rabi sweep
     with for_(n, 0, n < n_avg, n + 1):
-        with for_(*from_array(t, t_vec)):
-            # Play the Rabi pulse with varying durations
-            play("x180" * amp(1), "NV", duration=t)
+        with for_(*from_array(a, a_vec)):
+            # Play the Rabi pulse with varying amplitude
+            play("x180" * amp(a), "NV")  # 'a' is a pre-factor to the amplitude defined in the config ("mw_amp_NV")
             align()  # Play the laser pulse after the mw pulse
             play("laser_ON", "AOM1")
             # Measure and detect the photons on SPCM1
@@ -62,26 +63,33 @@ with program() as time_rabi:
             align()
 
             # Play the Rabi pulse with zero amplitude
-            play("x180" * amp(0), "NV", duration=t)  # pulse of varied lengths
+            play("x180" * amp(0), "NV")
             align()  # Play the laser pulse after the mw pulse
             play("laser_ON", "AOM1")
             # Measure and detect the dark counts on SPCM1
             measure("readout", "SPCM1", None, time_tagging.analog(times, meas_len_1, counts))
             save(counts, counts_dark_st)  # save dark counts
-            wait(wait_between_runs * u.ns)
+            wait(wait_between_runs * u.ns)  # wait in between iterations
 
         save(n, n_st)  # save number of iteration inside for_loop
 
     with stream_processing():
         # Cast the data into a 1D vector, average the 1D vectors together and store the results on the OPX processor
-        counts_st.buffer(len(t_vec)).average().save("counts")
-        counts_dark_st.buffer(len(t_vec)).average().save("counts_dark")
+        counts_st.buffer(len(a_vec)).average().save("counts")
+        counts_dark_st.buffer(len(a_vec)).average().save("counts_dark")
         n_st.save("iteration")
 
 #####################################
 #  Open Communication with the QOP  #
 #####################################
-qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name, port=qop_port, octave=octave_config)
+calibration_db_dir = Path(__file__).resolve().parents[1]  # QM/
+qmm = QuantumMachinesManager(
+    host=qop_ip,
+    cluster_name=cluster_name,
+    port=qop_port,
+    octave=octave_config,
+    octave_calibration_db_path=calibration_db_dir,
+)
 
 #######################
 # Simulate or execute #
@@ -91,10 +99,8 @@ simulate = False
 if simulate:
     # Simulates the QUA program for the specified duration
     simulation_config = SimulationConfig(duration=10_000)  # In clock cycles = 4ns
-    job = qmm.simulate(config, time_rabi, simulation_config)
+    job = qmm.simulate(config, power_rabi, simulation_config)
     job.get_simulated_samples().con1.plot()
-    plt.legend('')
-    plt.show()
 else:
     # Open the quantum machine
     qm = qmm.open_qm(config)
@@ -106,7 +112,7 @@ else:
             print("-" * 37 + f" Calibrates {element}")
             qm.calibrate_element(element, {NV_LO_freq: (NV_IF_freq,)})
     # Send the QUA program to the OPX, which compiles and executes it
-    job = qm.execute(time_rabi)
+    job = qm.execute(power_rabi)
     # Get results from QUA program
     results = fetching_tool(job, data_list=["counts", "counts_dark", "iteration"], mode="live")
     # Live plotting
@@ -120,10 +126,10 @@ else:
         progress_counter(iteration, n_avg, start_time=results.get_start_time())
         # Plot data
         plt.cla()
-        plt.plot(t_vec * 4, counts / 1000 / (meas_len_1 / u.s), label="photon counts")
-        plt.plot(t_vec * 4, counts_dark / 1000 / (meas_len_1 / u.s), label="dark counts")
-        plt.xlabel("Rabi pulse duration [ns]")
+        plt.plot(a_vec * pi_amp_NV, counts / 1000 / (meas_len_1 * 1e-9), label="photon counts")
+        plt.plot(a_vec * pi_amp_NV, counts_dark / 1000 / (meas_len_1 * 1e-9), label="dark_counts")
+        plt.xlabel("Rabi pulse amplitude [V]")
         plt.ylabel("Intensity [kcps]")
-        plt.title("Time Rabi")
+        plt.title("Power Rabi")
         plt.legend()
         plt.pause(0.1)

@@ -1,9 +1,6 @@
 import numpy as np
 from qualang_tools.units import unit
-from qualang_tools.plot import interrupt_on_close
-from qualang_tools.results import progress_counter, fetching_tool
-from qualang_tools.loops import from_array
-from JM_set_octave import OctaveUnit, octave_declaration
+from MontanaConfocalAttocube.JM.Set_octave import OctaveUnit, octave_declaration
 
 # IQ imbalance matrix
 def IQ_imbalance(g, phi):

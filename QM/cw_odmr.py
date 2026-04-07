@@ -20,14 +20,15 @@ from qm import SimulationConfig
 import matplotlib.pyplot as plt
 from configuration import *
 from qualang_tools.results.data_handler import DataHandler
+from pathlib import Path
 
 ##################
 #   Parameters   #
 ##################
-# Parameters Definition
-f_vec = np.arange(-100 * u.MHz, 100 * u.MHz, 1 * u.MHz)  # Frequency vector
+f_vec = np.arange(-150 * u.MHz, 300 * u.MHz, 2 * u.MHz)  # Frequency vector
 n_avg = 1_000_000  # number of averages
 readout_len = long_meas_len_1  # Readout duration for this experiment
+#readout_len = 1000000 # testing
 
 # Data to save
 save_data_dict = {
@@ -59,6 +60,7 @@ with program() as cw_odmr:
             play("laser_ON", "AOM2", duration=readout_len * u.ns)
             wait(1_000 * u.ns, "SPCM1")  # so readout don't catch the first part of spin reinitialization
             # Measure and detect the photons on SPCM1
+
             measure("long_readout", "SPCM1", time_tagging.analog(times, readout_len, counts))
 
             save(counts, counts_st)  # save counts on stream
@@ -75,7 +77,12 @@ with program() as cw_odmr:
 #####################################
 #  Open Communication with the QOP  #
 #####################################
-qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name)
+calibration_db_dir = Path(__file__).resolve().parent
+qmm = QuantumMachinesManager(
+    host=qop_ip,
+    cluster_name=cluster_name,
+    octave_calibration_db_path=calibration_db_dir,
+)
 
 #######################
 # Simulate or execute #
@@ -102,6 +109,7 @@ else:
     qm = qmm.open_qm(config, close_other_machines=True)
     # Send the QUA program to the OPX, which compiles and executes it
     job = qm.execute(cw_odmr)
+    #print(job.execution_report())
     # Get results from QUA program
     results = fetching_tool(job, data_list=["counts", "iteration"], mode="live")
     # Live plotting
@@ -113,10 +121,11 @@ else:
         counts, iteration = results.fetch_all()
         # Progress bar
         progress_counter(iteration, n_avg, start_time=results.get_start_time())
+        #print(counts)
         # Plot data
         plt.cla()
-        plt.plot((NV_LO_freq * 0 + f_vec) / u.MHz, counts / 1000 / (readout_len * 1e-9), label="photon counts")
-        plt.xlabel("MW frequency [MHz]")
+        plt.scatter((NV_LO_freq * 1 + f_vec) / u.GHz, counts / 1000 / (readout_len * 1e-9), label="photon counts")
+        plt.xlabel("MW frequency [GHz]")
         plt.ylabel("Intensity [kcps]")
         plt.title("ODMR")
         plt.legend()
@@ -126,5 +135,5 @@ else:
     data_handler = DataHandler(root_data_folder=save_dir)
     save_data_dict.update({"counts_data": counts})
     save_data_dict.update({"fig_live": fig})
-    data_handler.additional_files = {script_name: script_name, **default_additional_files}
-    data_handler.save_data(data=save_data_dict, name="_".join(script_name.split("_")[1:]).split(".")[0])
+    #data_handler.additional_files = {script_name: script_name, **default_additional_files}
+    data_handler.save_data(data=save_data_dict, name=script_name.split(".")[0])

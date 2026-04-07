@@ -10,6 +10,7 @@ from configuration_TUTORIAL import *
 from qm import generate_qua_script
 import matplotlib.pyplot as plt
 from JM.configuration_TUTORIAL import config
+from pathlib import Path
 
 ###################
 # The QUA program #
@@ -39,7 +40,8 @@ with program() as hello_QUA:
 #####################################
 #  Open Communication with the QOP  #
 #####################################
-qmm = QuantumMachinesManager(qop_ip, cluster_name=cluster_name)  # remove octave flag if not using it
+calibration_db_dir = Path(__file__).resolve().parents[1]  # QM/
+qmm = QuantumMachinesManager(qop_ip, cluster_name=cluster_name, octave_calibration_db_path=calibration_db_dir)  # remove octave flag if not using it
 # qmm = QuantumMachinesManager(qop_ip, opx_port)
 
 simulate = True

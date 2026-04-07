@@ -4,24 +4,31 @@ The program consists in playing a laser pulse while performing time tagging cont
 This allows measuring the received photons as a function of time while adjusting external parameters
 to validate the experimental set-up.
 """
-
+import numpy as np
+from pathlib import Path
 from qm import QuantumMachinesManager
 from qm.qua import *
 from qm import SimulationConfig
 import matplotlib.pyplot as plt
 from configuration import *
 from qualang_tools.results.data_handler import DataHandler
-
+from math import log10, ceil, floor
+#import seaborn as sns
+#from qbstyles import mpl_style
+#mpl_style(dark=True)
+def round_to_1(x):
+    if x != 0:
+        return round(x, -int(floor(log10(abs(x)))))
+    else:
+        return 0
 ##################
 #   Parameters   #
 ##################
 # Parameters Definition
-total_integration_time = int(100 * u.ms)  # Total duration of the measurement
-# Duration of a single chunk. Needed because the OPX cannot measure for more than ~1ms
-single_integration_time_ns = int(500 * u.us)  # 500us
-single_integration_time_cycles = single_integration_time_ns // 4
-# Number of chunks to get the total measurement time
-n_count = int(total_integration_time / single_integration_time_ns)
+n_count = 3000
+meas_len = long_meas_len_1
+n_avg = 100_000_000
+time_arr_len = 1000
 
 ###################
 # The QUA program #
@@ -30,31 +37,41 @@ with program() as counter:
     times = declare(int, size=1000)  # QUA vector for storing the time-tags
     counts = declare(int)  # variable for number of counts of a single chunk
     total_counts = declare(int)  # variable for the total number of counts
+    times = declare(int, size=time_arr_len)  # QUA vector for storing the time-tags
+    times_ref = declare(int, size=time_arr_len)  # QUA vector for storing the time-tags of reference counts
+    times_st = declare_stream()  # stream to save time tags of counts, ref
     n = declare(int)  # number of iterations
+    i = declare(int)  # variable to sweep over time tags
     counts_st = declare_stream()  # stream for counts
 
     # Infinite loop to allow the user to work on the experimental set-up while looking at the counts
-    with infinite_loop_():
-        # Loop over the chunks to measure for the total integration time
-        with for_(n, 0, n < n_count, n + 1):
-            # Play the laser pulse...
-            play("laser_ON", "AOM2", duration=single_integration_time_cycles)
-            # ... while measuring the events from the SPCM
-            measure("readout_pulse_1", "SPCM1", time_tagging.analog(times, single_integration_time_ns, counts))
-            # Increment the received counts
-            assign(total_counts, total_counts + counts)
+    with for_(n, 0, n < n_avg, n + 1):
+        # Play the laser pulse...
+        update_frequency("NV", 167 * u.MHz)
+        align()
+        play("laser_ON", "AOM2")
+        measure("long_readout", "SPCM1", time_tagging.analog(times, meas_len, counts))
 
-        # Save the counts
-        save(total_counts, counts_st)
-        assign(total_counts, 0)
+        wait(2500//4, "NV")
+        play("x180" * amp(1), "NV", duration=1000//4)
+        align()  # Play the laser pulse after the mw pulse
+        save(counts, counts_st)
+        with for_(i, 0, i < counts, i + 1):
+            save(times[i], times_st)  # cant directly save QUA vector, loop and save each element separately
 
     with stream_processing():
-        counts_st.with_timestamps().save_all("counts")
+        counts_st.with_timestamps().save("counts")
+        times_st.buffer(time_arr_len).save("time_tags")  # save time tags buffer size should be larger than counts expected
 
 #####################################
 #  Open Communication with the QOP  #
 #####################################
-qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name)
+calibration_db_dir = Path(__file__).resolve().parent
+qmm = QuantumMachinesManager(
+    host=qop_ip,
+    cluster_name=cluster_name,
+    octave_calibration_db_path=calibration_db_dir,
+)
 
 #######################
 # Simulate or execute #
@@ -78,33 +95,23 @@ if simulate:
     waveform_report.create_plot(samples, plot=True, save_path=str(Path(__file__).resolve()))
 else:
     qm = qmm.open_qm(config, close_other_machines=True)
-
     job = qm.execute(counter)
     # Get results from QUA program
-    res_handles = job.result_handles
-    counts_handle = res_handles.get("counts")
-    counts_handle.wait_for_values(3)
-    time = []
-    counts = []
-    # Live plotting
-    fig = plt.figure()
+    results = fetching_tool(
+        job, data_list=["counts", "time_tags"], mode="live"
+    )
+
+    fig, ax = plt.subplots()
     interrupt_on_close(fig, job)  # Interrupts the job when closing the figure
-    last_idx = 0
+    time_tag_arr = np.zeros(meas_len)
 
-    while res_handles.is_processing():
-        new_idx = counts_handle.count_so_far()
-        new_counts = counts_handle.fetch(slice(last_idx, new_idx))
-        last_idx = new_idx
-        time.extend(new_counts["timestamp"] / u.s)  # Convert timestamps to seconds
-        timestep = time[1]-time[0]
-        counts.extend(new_counts["value"] / timestep / 1000)
-        plt.cla()
-        if len(time) > 50:
-            plt.plot(time[-50:], counts[-50:])
-        else:
-            plt.plot(time, counts)
-
-        plt.xlabel("Time [s]")
-        plt.ylabel("Counts [kcps]")
-        plt.title("Counter")
+    while results.is_processing():
+        counts, time_tags = results.fetch_all()
+        ax.cla()
+        for i in time_tags:
+            time_tag_arr[i] += 1  # Convert histogram of time tags to array for faster plotting, saving memory
+        time_tags = []
+        ax.plot(np.linspace(0, meas_len, meas_len), time_tag_arr[:])
+        ax.set_xlabel("Time bins")
+        ax.set_ylabel("Counts")
         plt.pause(0.1)

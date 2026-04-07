@@ -147,7 +147,12 @@ def receive_signal():
 #  Open Communication with the QOP  #
 #####################################
 
-qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name)
+calibration_db_dir = Path(__file__).resolve().parents[1]  # QM/
+qmm = QuantumMachinesManager(
+    host=qop_ip,
+    cluster_name=cluster_name,
+    octave_calibration_db_path=calibration_db_dir,
+)
 
 #######################
 # Simulate or execute #
@@ -245,7 +250,7 @@ else:
     raw_counts, raw_counts_ref = results_raw.fetch_all()
     # Save results
     script_name = Path(__file__).name
-    data_handler = DataHandler(root_data_folder='C:/Users/attocube/Documents/MontanaQudiAttocube/MontanaConfocalAttocube/JM/save_dir')
+    data_handler = DataHandler(root_data_folder='C:/Users/attocube/Documents/MontanaQudiAttocube/MontanaConfocalAttocube/QM/save_dir')
     save_data_dict.update({"counts_data": counts})
     save_data_dict.update({"t_vec": t_vec})
     save_data_dict.update({"iteration": np.array([int(iteration)])})

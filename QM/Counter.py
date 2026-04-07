@@ -5,6 +5,7 @@ This allows measuring the received photons as a function of time while adjusting
 to validate the experimental set-up.
 """
 import numpy as np
+from pathlib import Path
 from qm import QuantumMachinesManager
 from qm.qua import *
 from qm import SimulationConfig
@@ -59,7 +60,12 @@ with program() as counter:
 #####################################
 #  Open Communication with the QOP  #
 #####################################
-qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name)
+calibration_db_dir = Path(__file__).resolve().parent
+qmm = QuantumMachinesManager(
+    host=qop_ip,
+    cluster_name=cluster_name,
+    octave_calibration_db_path=calibration_db_dir,
+)
 
 #######################
 # Simulate or execute #

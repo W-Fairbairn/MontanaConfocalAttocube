@@ -8,6 +8,7 @@ from JM_Pulse_Sequence_Configuration import *
 from qualang_tools.loops import from_array
 from qm.octave import ClockMode
 import numpy as np
+from pathlib import Path
 
 ###################
 # The QUA program #
@@ -123,7 +124,14 @@ with program() as T1:
 #####################################
 #  Open Communication with the QOP  #
 #####################################
-qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name, port=qop_port, octave=octave_config)
+calibration_db_dir = Path(__file__).resolve().parents[1]  # QM/
+qmm = QuantumMachinesManager(
+    host=qop_ip,
+    cluster_name=cluster_name,
+    port=qop_port,
+    octave=octave_config,
+    octave_calibration_db_path=calibration_db_dir,
+)
 
 #######################
 # Simulate or execute #
@@ -182,4 +190,3 @@ save_data = True
 if save_data:
     data_to_csv = np.array([t_vec * 4, counts1 / counts_dark1, counts2 / counts_dark2]).transpose()
     np.savetxt('last_run_data_T1.csv', data_to_csv, delimiter=',')
-
