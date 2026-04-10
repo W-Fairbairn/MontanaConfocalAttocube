@@ -1,8 +1,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
+from configuration import *
 
-f = np.load("C:/Users/attocube/Documents/MontanaQudiAttocube/MontanaConfocalAttocube/QM/save_dir/2026-03-24/#326_T1_203815/arrays.npz")
+
+
+
+f = np.load(save_dir / "2026-03-24/#326_T1_203815/arrays.npz")
 t_vec = f["t_vec"]
 counts = f["counts_data"]
 x = 4 * t_vec / 1000000  # Convert to ms

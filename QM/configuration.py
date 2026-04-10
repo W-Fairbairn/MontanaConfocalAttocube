@@ -81,7 +81,7 @@ NV_LO_freq = 2.87 * u.GHz
 
 refocus_len = 30000 * u.ns
 # Pulses lengths
-initialization_len_1 = 3000 * u.ns
+initialization_len_1 = 3500 * u.ns
 meas_len_1 = 500 * u.ns
 long_meas_len_1 = 4000 * u.ns
 
@@ -98,10 +98,10 @@ mw_amp_NV = 0.2  # in units of volts
 mw_len_NV = 100 * u.ns
 
 x180_amp_NV = 0.1  # in units of volts
-x180_len_NV = 500  # in units of ns
+x180_len_NV = 45 // 4 * 4  # in units of ns
 
 x90_amp_NV = x180_amp_NV / 2  # in units of volts
-x90_len_NV = x180_len_NV  # in units of ns
+x90_len_NV = x180_len_NV / 2 // 4 * 4 # in units of ns
 
 # RF parameters
 rf_frequency = 10 * u.MHz
@@ -112,11 +112,11 @@ rf_length = 1000
 signal_threshold_1 = -500  # ADC units, to convert to volts divide by 4096 (12 bit ADC)
 signal_threshold_2 = -500  # ADC units, to convert to volts divide by 4096 (12 bit ADC)
 
-AOM_delay = 950 // 4  # in clock cycles, to be adjusted to have the laser pulse start at the right time with respect to the detection window
-Measurement_delay = 70 // 4  # in clock cycles, to be adjusted to have the detection window start at the right time with respect to the laser pulse
+AOM_delay = 950 // 4 * 4  # in clock cycles, to be adjusted to have the laser pulse start at the right time with respect to the detection window
+Measurement_delay = 70 // 4 * 4  # in clock cycles, to be adjusted to have the detection window start at the right time with respect to the laser pulse
 # Delays
-detection_delay_1 = 80 * u.ns
-detection_delay_2 = 80 * u.ns
+detection_delay_1 = 80 + AOM_delay * u.ns
+detection_delay_2 = 80 + AOM_delay * u.ns
 laser_delay_1 = 0 * u.ns
 laser_delay_2 = 0 * u.ns
 mw_delay = 0 * u.ns
@@ -125,7 +125,7 @@ rf_delay = 0 * u.ns
 #initialization_len_2 = 9000 * u.ns
 #long_meas_len_1 = 10000 * u.ns
 
-wait_between_runs = 100
+wait_between_runs = 1000 * u.ns
 
 config = {
     "controllers": {
