@@ -29,7 +29,7 @@ f_vec = np.arange(-150 * u.MHz, 300 * u.MHz, 2 * u.MHz)  # Frequency vector
 n_avg = 1_000_000  # number of averages
 readout_len = long_meas_len_1  # Readout duration for this experiment
 #readout_len = 1000000 # testing
-
+config["octaves"][octave]["RF_outputs"][1]["gain"] = -20
 # Data to save
 save_data_dict = {
     "n_avg": n_avg,

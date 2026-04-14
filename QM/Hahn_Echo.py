@@ -31,12 +31,15 @@ num_points = 40
 length_run = 5000
 t_vec = np.arange(4, length_run//4, max(1,length_run//(4*num_points)))
 n_avg = 100_000_000
-rabi_frequency = 7.43 * u.MHz  # Rabi frequency for the pi pulse, used to determine the pi pulse duration from the configuration
-x180_len_NV = 1/(2*rabi_frequency) / 1E-9 # Pi pulse duration in ns
-x90_len_NV = x180_len_NV // 2  # Pi/2 pulse duration in ns
+# Rabi frequency for the pi pulse, used to determine the pi pulse duration from the configuration
+rabi_frequency = 7.43 * u.MHz
+pi_pulse_len = 1/(2*rabi_frequency) / 1E-9
+# pulse_len//4*4 to round to the nearest multiple of 4ns, clock cycle of the OPX, to avoid compilation errors
+config["pulses"]["x180_pulse"]["length"] = pi_pulse_len//4*4
+config["pulses"]["x90_pulse"]["length"] = pi_pulse_len/2//4*4
 
 # Determine reference readout during single laser pulse
-reference_wait = 200//4  # in clock cycles
+reference_wait = 100//4  # in clock cycles
 reference_readout = reference_wait >= 4
 
 # Data to save
@@ -70,11 +73,11 @@ with program() as hahn_echo:
             update_frequency("NV", 100 * u.MHz)
             align()
             # First Ramsey sequence with x90 - idle time - x90
-            play("x90" * amp(1), "NV", duration=pi_pulse//2)  # Pi/2 pulse to qubit
+            play("x90" * amp(1), "NV")  # Pi/2 pulse to qubit
             wait(t, "NV")  # Variable idle time
-            play("x180" * amp(1), "NV", duration=pi_pulse)  # Pi pulse to qubit
+            play("x180" * amp(1), "NV")  # Pi pulse to qubit
             wait(t, "NV")  # Variable idle time
-            play("x90" * amp(1), "NV", duration=pi_pulse//2)  # Pi/2 pulse to qubit
+            play("x90" * amp(1), "NV")  # Pi/2 pulse to qubit
             align()  # Play the laser pulse after the Echo sequence
             # Measure and detect the photons on SPCM1
             play("laser_ON", "AOM2")
@@ -104,7 +107,7 @@ with program() as hahn_echo:
             save(counts, counts_2_st)  # save counts
             # Measure reference photon counts at end of laser pulse
             if reference_readout:
-                #wait(reference_wait, "SPCM1")
+                wait(reference_wait, "SPCM1")
                 measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
             else:
                 assign(counts, 1)
@@ -173,7 +176,8 @@ else:
 
         # Plot data
         ax1.cla()
-        ax1.scatter(8 * t_vec, norm1, label="x90_idle_x180_idle_x90") # x4 to account for 4ns clock cycle, x2 for the two idle times
+        # x4 to account for 4ns clock cycle, x2 for the two idle times
+        ax1.scatter(8 * t_vec, norm1, label="x90_idle_x180_idle_x90")
         ax1.set_ylabel("Norm. Signal")
         ax1.set_title("Hahn Echo iteration: " + str(iteration))
         ax1.legend()

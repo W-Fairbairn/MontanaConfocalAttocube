@@ -26,9 +26,19 @@ def round_to_1(x):
 ##################
 # Parameters Definition
 n_count = 3000
+
+# ===== CUSTOMIZE CONFIG HERE =====
+# Override laser initialization length without modifying configuration.py
+laser_duration = 4000 * u.ns  # Laser pulse duration - adjust this value to change laser on-time
+# ==================================
+
+long_meas_len_1 = 5000  # in clock cycles, should be long enough to capture all counts, can be adjusted based on expected count rates
 meas_len = long_meas_len_1
 n_avg = 100_000_000
 time_arr_len = 1000
+
+# Update only the laser_ON_2 pulse in the config
+config["pulses"]["laser_ON_2"]["length"] = laser_duration
 
 ###################
 # The QUA program #
@@ -47,7 +57,7 @@ with program() as counter:
     # Infinite loop to allow the user to work on the experimental set-up while looking at the counts
     with for_(n, 0, n < n_avg, n + 1):
         # Play the laser pulse...
-        update_frequency("NV", 167 * u.MHz)
+        update_frequency("NV", 100 * u.MHz)
         align()
         play("laser_ON", "AOM2")
         measure("long_readout", "SPCM1", time_tagging.analog(times, meas_len, counts))

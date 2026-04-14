@@ -24,7 +24,88 @@ from configuration import *
 from qualang_tools.results.data_handler import DataHandler
 import time
 from scipy.optimize import curve_fit
-class Rabi():
+from PyQt6 import QtCore, QtWidgets, QtGui, uic
+from PyQt6.QtCore import QSettings
+from PyQt6.QtGui import QColor, QAction
+from PyQt6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QDialogButtonBox,
+    QGroupBox,
+    QRadioButton,
+    QVBoxLayout,
+    QLabel,
+    QLineEdit,
+)
+from experiment_base import ExperimentBase
+
+settings = QSettings("Diamond", "QM_Rabi")
+class SettingsDialogRabi(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.load_settings()
+        self.setWindowTitle("Settings")
+
+        self.time_max = QLineEdit(str(self.time_max), parent=self)
+        self.num_points = QLineEdit(str(self.num_points), parent=self)
+        self.num_averages = QLineEdit(str(self.num_averages), parent=self)
+        self.resonant_Frequency = QLineEdit(str(self.resonant_Frequency), parent=self)
+
+
+        buttons = (
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+
+        button_box = QDialogButtonBox(buttons)
+        button_box.accepted.connect(self.accept)  # type: ignore
+        button_box.rejected.connect(self.reject)  # type: ignore
+
+        # Main layout
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel("Time max (ns):"))
+        layout.addWidget(self.time_max)
+        layout.addWidget(QLabel("Number of points:"))
+        layout.addWidget(self.num_points)
+        layout.addWidget(QLabel("Number of averages:"))
+        layout.addWidget(self.num_averages)
+
+        layout.addWidget(QLabel(""))
+
+        layout.addWidget(QLabel("Resonant Frequency (MHz):"))
+        layout.addWidget(self.resonant_Frequency)
+
+        layout.addWidget(button_box)
+        self.setLayout(layout)
+
+    def load_settings(self):
+        """Load saved settings and update widgets."""
+        self.resonant_Frequency = settings.value("resonant_Frequency", 0)
+        self.time_max = settings.value("time_max", 500)
+        self.num_points = settings.value("num_points", 50)
+        self.num_averages = settings.value("num_averages", 10000000)
+
+    def accept(self):
+        """Override accept to save settings when OK button is clicked."""
+        settings.setValue("resonant_Frequency", self.resonant_Frequency.text())
+        settings.setValue("time_max", self.time_max.text())
+        settings.setValue("num_points", self.num_points.text())
+        settings.setValue("num_averages", self.num_averages.text())
+        super().accept()
+
+    @staticmethod
+    def get_settings():
+        """Retrieve settings from QSettings. Returns tuple of (freq, time_max, num_points, n_avg)"""
+        try:
+            freq = float(settings.value("resonant_Frequency", 0.0))
+            time_max = int(settings.value("time_max", 500))
+            num_points = int(settings.value("num_points", 50))
+            n_avg = int(settings.value("num_averages", 10000000))
+            return freq, time_max, num_points, n_avg
+        except (ValueError, TypeError):
+            print("Invalid Inputs, using default values.")
+            return 0.0, 500, 50, 10000000
+class Rabi(ExperimentBase):
     def __init__(self):
 
         self.qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name,
@@ -35,20 +116,12 @@ class Rabi():
         #   Parameters   #
         ##################
         self.is_running = False
-        self.last_counts = None
-        self.last_counts_ref = None
-        self.last_iteration = None
-        self.num_points = 50
-        self.length_run = 500
-        self.t_vec = np.arange(4, self.length_run//4, max(1,self.length_run//(4*self.num_points)))  # Pulse durations in clock cycles (4ns)
-        self.n_avg = 10_000_000  # Number of averaging loops
-
-
-        # Determine reference readout during single laser pulse
-        self.reference_wait = initialization_len_2 // 4 - AOM_delay - 2 * meas_len_1 // 4 - 100  # in clock cycles
-        self.reference_readout = self.reference_wait >= 4
-
-        self.ref_offset = (initialization_len_2 - 2 * meas_len_1 - 25 - AOM_delay) // 4
+        self.num_points = None
+        self.length_run = None
+        self.t_vec = None
+        self.n_avg = None
+        self.time_rabi = None
+        self.counts, self.counts_ref, self.iteration, self.time_tags = None, None, None, None
 
         # Data to save
         self.save_data_dict = {
@@ -57,8 +130,12 @@ class Rabi():
             "config": config,
         }
 
+    def compile_program(self):
+        # Clear data arrays from previous runs
         self.counts, self.counts_ref, self.iteration, self.time_tags = None, None, None, None
 
+        freq, self.length_run, self.num_points, self.n_avg = SettingsDialogRabi.get_settings()
+        self.t_vec = np.arange(4, self.length_run // 4, max(1, self.length_run // (4 * self.num_points)))  # Pulse durations in clock cycles (4ns)
         ###################
         # The QUA program #
         ###################
@@ -83,7 +160,7 @@ class Rabi():
             # Time Rabi sweep
             with for_(n, 0, n < self.n_avg, n + 1):
                 with for_(*from_array(t, self.t_vec)):
-                    update_frequency("NV", 100 * u.MHz)
+                    update_frequency("NV", freq * u.MHz)
                     play("x180" * amp(1), "NV", duration=t)
                     align()  # Play the laser pulse after the mw pulse
                     #wait(AOM_delay, "SPCM1")
@@ -92,7 +169,6 @@ class Rabi():
                     save(counts, counts_st)  # save counts
                     with for_(i, 0, i < counts, i + 1):
                         save(times[i], times_st)  # cant directly save QUA vector, loop and save each element separately
-                    #wait(800//4, "SPCM1")
                     measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
                     save(counts, counts_ref_st)
                     wait(wait_between_runs * u.ns)
@@ -165,6 +241,8 @@ class Rabi():
         return [interp_x, fit_y, text]
 
     def start_program(self):
+        # Always recompile to apply any setting changes
+        self.compile_program()
         try:
             simulate = False
             if simulate:
@@ -188,9 +266,9 @@ class Rabi():
                 results = fetching_tool(self.job, data_list=["counts", "counts_ref", "iteration", "time_tags"], mode="live")
                 while results.is_processing():
                     self.counts, self.counts_ref, self.iteration, self.time_tags = results.fetch_all()
-                    #print("counts:", self.counts)
+                    # Add debug plots here if needed
                     time.sleep(0.01)  # Small sleep to prevent CPU spinning
-                self.save_data(self.counts, self.counts_ref, self.iteration)
+                self.save_data()
         except Exception as e:
             print(f"Error in start_rabi: {e}")
             import traceback
