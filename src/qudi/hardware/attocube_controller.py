@@ -29,31 +29,42 @@ class AttocubeANC350(AttocubeStageInterface):
         self.log.debug("AttocubeANC350 deactivated.")
         return True
 
+    def _reconnect(self):
+        """Try to recover from a pyanc350 communication timeout by reconnecting."""
+        try:
+            if self.atc1 is None:
+                self.atc1 = Positioner()
+            try:
+                self.atc1.disconnect()
+            except Exception:
+                pass
+            self.atc1.connect()
+        except Exception:
+            self.log.exception('AttocubeANC350 reconnect failed')
+
     def move_absolute(self, position):
-        #print(f"Moving attocube stage to Z position {position} m")
-        # time.sleep(0.1) #fake stage movement wait time
-        print("hi")
-        self.atc1.setAxisOutput(1, 1, 0)
-        print("hi")
-        self.atc1.setTargetRange(1, 1e-6)
-        print("hi")
-        self.atc1.setTargetPosition(1, position)
-        print("hi")
-        self.atc1.startAutoMove(1, 1, 0)
-        time.sleep(0.5)
-        self.atc1.startAutoMove(1, 0, 0)
-        '''print("hi")
-        moving = 1
-        target = 0
-        while target == 0:
-            connected, enabled, moving, target, eotFwd, eotBwd, error = self.atc1.getAxisStatus(1)  # find bitmask of status
-            if target == 0:
-                print('axis moving, currently at', self.atc1.getPosition(1))
-            elif target == 1:
-                print('axis arrived at', self.atc1.getPosition(1))
+        """Move Z axis to an absolute position in meters.
+
+        Includes a couple of retries to handle transient comm timeouts.
+        """
+        last_err = None
+        for attempt in range(3):
+            try:
+                self.atc1.setAxisOutput(1, 1, 0)
+                self.atc1.setTargetRange(1, 1e-6)
+                self.atc1.setTargetPosition(1, position)
+                self.atc1.startAutoMove(1, 1, 0)
+                time.sleep(0.5)
                 self.atc1.startAutoMove(1, 0, 0)
-            time.sleep(0.5)'''
-        return
+                return
+            except Exception as exc:
+                last_err = exc
+                # communication timeout recovery
+                self.log.warning(f'Attocube move_absolute failed (attempt {attempt+1}/3): {exc}')
+                time.sleep(0.2)
+                self._reconnect()
+        # If we get here, all retries failed
+        raise last_err
 
     def move_coarse(self, position):
         #print(f"Moving attocube stage to Z position {position} m")
@@ -80,3 +91,13 @@ class AttocubeANC350(AttocubeStageInterface):
         except:
             pos = 0
         return pos
+
+    def stop(self):
+        """Stop any ongoing motion on the Z axis."""
+        try:
+            if self.atc1 is None:
+                return
+            self.atc1.startAutoMove(1, 0, 0)
+        except Exception:
+            self.log.exception('Failed to stop Attocube ANC350 motion')
+        return

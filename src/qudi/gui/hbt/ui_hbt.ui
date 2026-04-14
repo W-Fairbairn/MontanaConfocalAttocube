@@ -52,6 +52,7 @@
     <bool>false</bool>
    </attribute>
    <addaction name="run_hbt_Action"/>
+   <addaction name="fit_hbt_Action"/>
    <addaction name="save_hbt_Action"/>
   </widget>
   <action name="run_hbt_Action">
@@ -82,6 +83,18 @@
    </property>
    <property name="toolTip">
     <string>Save measurement to file</string>
+   </property>
+  </action>
+  <action name="fit_hbt_Action">
+   <property name="icon">
+    <iconset>
+     <normaloff>../../artwork/icons/oxygen/22x22/edit-redo.png</normaloff>../../artwork/icons/oxygen/22x22/edit-redo.png</iconset>
+   </property>
+   <property name="text">
+    <string>Fit HBT</string>
+   </property>
+   <property name="toolTip">
+    <string>Fit g2 data</string>
    </property>
   </action>
   <action name="actionClose">

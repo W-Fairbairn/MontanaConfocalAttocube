@@ -23,7 +23,7 @@ class PsatLogic(LogicBase):
 
 
         #load power values from csv
-        self.voltage_to_power_list = np.loadtxt("C:/Users/attocube/Desktop/power_to_voltage_data.txt")
+        self.voltage_to_power_list = np.loadtxt("C:/Users/attocube/Desktop/power_to_voltage_data_2.txt")
         #print(self.voltage_to_power_list)
         return
 
@@ -32,7 +32,6 @@ class PsatLogic(LogicBase):
 
     def set_power(self, channel, power):
         print("Setting power to", power, "mW")
-        #convert power to voltage
         voltage = self.power_to_voltage(power)
         #voltage = power
         print("converted to ", voltage, "volts")

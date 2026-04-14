@@ -20,6 +20,7 @@ from qm.qua import *
 import matplotlib.pyplot as plt
 from configuration import *
 from qm import SimulationConfig
+from pathlib import Path
 
 ##################
 #   Parameters   #
@@ -51,7 +52,12 @@ with program() as TimeTagging_calibration:
 #####################################
 #  Open Communication with the QOP  #
 #####################################
-qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name)
+calibration_db_dir = Path(__file__).resolve().parents[1]  # QM/
+qmm = QuantumMachinesManager(
+    host=qop_ip,
+    cluster_name=cluster_name,
+    octave_calibration_db_path=calibration_db_dir,
+)
 
 simulate = False
 

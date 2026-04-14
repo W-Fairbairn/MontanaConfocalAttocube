@@ -31,3 +31,5 @@
 # log files
 *.log
 *.log.*
+/QM/save_dir/
+/QM/Data/

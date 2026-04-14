@@ -14,6 +14,8 @@ class SwabianTimeTagger(TimeTaggerInterface):
         super().__init__(*args, **kwargs)
 
     def on_activate(self):
+        # Set channel number scheme to suppress deprecation warning
+        TimeTagger.setTimeTaggerChannelNumberScheme(TimeTagger.TT_CHANNEL_NUMBER_SCHEME_ONE)
         #connect to tagger
         self.tagger = self.connect_tagger()
         self.counter = TimeTagger.Counter(self.tagger, [7, 8], binwidth=self.binwidth, n_values=self.number_of_bins)

@@ -7,6 +7,7 @@ from JM_Pulse_Sequence_Configuration import *
 from qualang_tools.loops import from_array
 from qm.octave import ClockMode
 import numpy as np
+from pathlib import Path
 
 ###################
 # The QUA program #
@@ -127,7 +128,14 @@ with program() as hahn_echo:
 #####################################
 #  Open Communication with the QOP  #
 #####################################
-qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name, port=qop_port, octave=octave_config)
+calibration_db_dir = Path(__file__).resolve().parents[3] / "QM"
+qmm = QuantumMachinesManager(
+    host=qop_ip,
+    cluster_name=cluster_name,
+    port=qop_port,
+    octave=octave_config,
+    octave_calibration_db_path=calibration_db_dir,
+)
 
 #######################
 # Simulate or execute #
@@ -176,4 +184,3 @@ else:
         plt.legend()
         plt.pause(0.1)
         print(iteration)
-

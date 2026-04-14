@@ -17,11 +17,17 @@ from qm import SimulationConfig
 import matplotlib.pyplot as plt
 from Configuration_no_octave import *
 from qualang_tools.results.data_handler import DataHandler
+from pathlib import Path
 
 #####################################
 #  Open Communication with the QOP  #
 #####################################
-qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name)
+calibration_db_dir = Path(__file__).resolve().parents[1]  # QM/
+qmm = QuantumMachinesManager(
+    host=qop_ip,
+    cluster_name=cluster_name,
+    octave_calibration_db_path=calibration_db_dir,
+)
 
 print(qmm.version_dict())
 version_str = qmm.version_dict()["qm-qua"]  # QOP version as a string

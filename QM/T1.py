@@ -19,6 +19,7 @@ from qm import QuantumMachinesManager
 from qm.qua import *
 from qm import SimulationConfig
 import matplotlib.pyplot as plt
+
 from configuration import *
 from qualang_tools.loops import from_array
 from qualang_tools.results.data_handler import DataHandler
@@ -26,11 +27,14 @@ import numpy as np
 from pathlib import Path
 import threading
 from multiprocessing.connection import Listener
+import sys
+import signal
+
 
 ##################
 #   Parameters   #
 ##################
-run_length = 30 * (1E6 // 4)  # converted to clock cycles (4ns), change first value (in ms)
+run_length = 5 * (1E6 // 4)  # converted to clock cycles (4ns), change first value (in ms)
 num_points = 15  # number of points to sample for T1 curve
 n_avg = 1_000_000  # The number averaging iterations
 
@@ -147,7 +151,12 @@ def receive_signal():
 #  Open Communication with the QOP  #
 #####################################
 
-qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name)
+calibration_db_dir = Path(__file__).resolve().parent
+qmm = QuantumMachinesManager(
+    host=qop_ip,
+    cluster_name=cluster_name,
+    octave_calibration_db_path=calibration_db_dir,
+)
 
 #######################
 # Simulate or execute #
@@ -173,7 +182,7 @@ if simulate:
     # Visualize and save the waveform report
     waveform_report.create_plot(samples, plot=True, save_path=str(Path(__file__).resolve()))
 else:
-    # Open the quantum machine
+    # Open quantum machine and execute program
     qm = qmm.open_qm(config, close_other_machines=True)
     qm.set_io1_value(False)  # Ensure IO1 is low at the start of the program (not paused)
     job = qm.execute(T1)  # start the job
@@ -183,6 +192,8 @@ else:
     )
     t2 = threading.Thread(target=receive_signal, daemon=True)  # Thread to receive pause/resume signals from external script, set as daemon to ensure it closes when main thread closes
     t2.start()
+
+
 
     # Live plotting
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2)  # , sharex=True
@@ -243,9 +254,10 @@ else:
         job, data_list=["raw_counts", "raw_counts_ref"], mode="wait_for_all"
     )
     raw_counts, raw_counts_ref = results_raw.fetch_all()
+
     # Save results
     script_name = Path(__file__).name
-    data_handler = DataHandler(root_data_folder='C:/Users/attocube/Documents/MontanaQudiAttocube/MontanaConfocalAttocube/JM/save_dir')
+    data_handler = DataHandler(root_data_folder='C:/Users/attocube/Documents/MontanaQudiAttocube/MontanaConfocalAttocube/QM/save_dir')
     save_data_dict.update({"counts_data": counts})
     save_data_dict.update({"t_vec": t_vec})
     save_data_dict.update({"iteration": np.array([int(iteration)])})
@@ -253,4 +265,5 @@ else:
     save_data_dict.update({"counts_ref": counts_ref})
     save_data_dict.update({"raw_counts": np.array(raw_counts)})
     save_data_dict.update({"raw_counts_ref": np.array(raw_counts_ref)})
-    data_handler.save_data(data=save_data_dict, name="_".join(script_name.split("_")[1:]).split(".")[0])
+    data_handler.save_data(data=save_data_dict, name=script_name.split(".")[0])
+

@@ -30,11 +30,8 @@ import copy as cp
 from qudi.core.module import LogicBase
 from qudi.util.mutex import RecursiveMutex, Mutex
 from qudi.core.connector import Connector
-from qudi.core.configoption import ConfigOption
 from qudi.core.statusvariable import StatusVar
 from qudi.util.fit_models.gaussian import Gaussian2D, Gaussian
-
-from qudi.interface.scanning_probe_interface import ScanData
 
 
 class ScanningOptimizeLogic(LogicBase):
@@ -365,14 +362,23 @@ class ScanningOptimizeLogic(LogicBase):
             if self.module_state() == 'idle':
                 return
 
-            #self.log.debug(f"Next opt sequence step {self._sequence_index}")
+            # Execute current sequence step. Steps handled by scan_logic are started here.
+            seq_step = self._scan_sequence[self._sequence_index]
 
-            if self._scan_logic().toggle_scan(True,
-                                              self._scan_sequence[self._sequence_index],
-                                              self.module_uuid) < 0:
-                self.log.error('Unable to start {0} scan. Optimize aborted.'.format(
-                    self._scan_sequence[self._sequence_index])
-                )
+            # Special handling for z-stage based optimization step.
+            if len(seq_step) == 1 and seq_step[0] == 'z':
+                # Run z step and then continue with the next sequence element.
+                # Keep the optimizer locked while running.
+                self._run_z_stage_optimize_step()
+                self._sequence_index += 1
+                if self._sequence_index >= len(self._scan_sequence):
+                    self.stop_optimize()
+                else:
+                    self._sigNextSequenceStep.emit()
+                return
+
+            if self._scan_logic().toggle_scan(True, seq_step, self.module_uuid) < 0:
+                self.log.error('Unable to start {0} scan. Optimize aborted.'.format(seq_step))
                 self.stop_optimize()
             return
 
@@ -425,59 +431,32 @@ class ScanningOptimizeLogic(LogicBase):
 
             self._sequence_index += 1
 
-            # Terminate optimize sequence if finished; continue with next sequence step otherwise
-            if self._sequence_index >= len(self._scan_sequence) or 'z' in self._scan_sequence[self._sequence_index]:
+            # Continue optimizer sequence if there are steps left.
+            if self._sequence_index >= len(self._scan_sequence):
                 self.stop_optimize()
-                self.start_z_stage_optimize()
             else:
                 self._sigNextSequenceStep.emit()
             return
 
-    def stop_optimize(self):
-        with self._thread_lock:
-            if self.module_state() == 'idle':
-                self.sigOptimizeStateChanged.emit(False, dict(), None)
-                return 0
+    def _run_z_stage_optimize_step(self):
+        """Run a z-stage based optimization step as part of the configured scan_sequence.
 
-            if self._scan_logic().module_state() != 'idle':
-                # optimizer scans are never saved in scanning history
-                err = self._scan_logic().stop_scan()
-            else:
-                err = 0
-            self._scan_logic().set_scan_settings(self._stashed_scan_settings)
-            self._stashed_scan_settings = dict()
-            self.module_state.unlock()
-            self.sigOptimizeStateChanged.emit(False, dict(), None)
-            return err
-
-    def _get_pos_from_2d_gauss_fit(self, xy, data):
-        model = Gaussian2D()
-
+        This wraps the existing custom z-stage scan and emits optimizer updates in the same style
+        as the scanner-based steps so the GUI can reflect the selected sequence order.
+        """
+        # Keep old behavior (including start/stop messaging) but don't unlock the optimizer module.
         try:
-            fit_result = model.fit(data, x=xy, **model.estimate_peak(data, xy))
-        except:
-            x_min, x_max = xy[0].min(), xy[0].max()
-            y_min, y_max = xy[1].min(), xy[1].max()
-            x_middle = (x_max - x_min) / 2 + x_min
-            y_middle = (y_max - y_min) / 2 + y_min
-            self.log.exception('2D Gaussian fit unsuccessful.')
-            return (x_middle, y_middle), None, None
+            self.start_z_stage_optimize()
+        except Exception:
+            self.log.exception('Z-stage optimization step failed.')
+            # Emit a failed fit so the GUI can indicate invalid optimization.
+            try:
+                self.sigOptimizeStateChanged.emit(True, {'z': self._z_stage().get_position(1)}, None)
+            except Exception:
+                self.sigOptimizeStateChanged.emit(True, dict(), None)
+            # Abort sequence on failure.
+            self.stop_optimize()
 
-        return (fit_result.best_values['center_x'],
-                fit_result.best_values['center_y']), fit_result.best_fit.reshape(xy[0].shape), fit_result
-
-    def _get_pos_from_1d_gauss_fit(self, x, data):
-        model = Gaussian()
-
-        try:
-            fit_result = model.fit(data, x=x, **model.estimate_peak(data, x))
-        except:
-            x_min, x_max = x.min(), x.max()
-            middle = (x_max - x_min) / 2 + x_min
-            self.log.exception('1D Gaussian fit unsuccessful.')
-            return (middle,), None, None
-
-        return (fit_result.best_values['center'],), fit_result.best_fit, fit_result
 
     def z_scan(self, pos, times_to_avg):
         x_data = []
@@ -494,6 +473,89 @@ class ScanningOptimizeLogic(LogicBase):
             y_data_avg.append(np.median(y_data))
             y_data = []
         return x_data, y_data_avg
+
+    def run_z_stage_scan_0_3000um(self, step_um=10.0, times_to_avg=3, dwell_time_s=0.0,
+                                 start_um=0.0, stop_um=3000.0, reverse=False):
+        """Run a simple Z scan by stepping the Attocube stage and reading counts.
+
+        This is intended to feed a 1D plot (z vs counts) in the scanning GUI.
+
+        Parameters
+        ----------
+        step_um : float
+            Step size in µm.
+        times_to_avg : int
+            Number of count samples per point (median is used).
+        dwell_time_s : float
+            Optional dwell time between count samples.
+        start_um, stop_um : float
+            Scan range in µm.
+        reverse : bool
+            If True, scan from stop->start.
+
+        Returns
+        -------
+        (np.ndarray, np.ndarray)
+            z positions in meters and counts.
+        """
+        if times_to_avg < 1:
+            times_to_avg = 1
+        if step_um <= 0:
+            raise ValueError('step_um must be > 0')
+
+        start_m = float(start_um) * 1e-6
+        stop_m = float(stop_um) * 1e-6
+        step_m = float(step_um) * 1e-6
+
+        # Build inclusive positions array
+        if stop_m >= start_m:
+            n = int(np.floor((stop_m - start_m) / step_m)) + 1
+            pos = start_m + step_m * np.arange(n)
+        else:
+            n = int(np.floor((start_m - stop_m) / step_m)) + 1
+            pos = start_m - step_m * np.arange(n)
+
+        if reverse:
+            pos = pos[::-1]
+
+        x_data = []
+        y_data_avg = []
+
+        for z_target in pos:
+            # Move stage to target z
+            try:
+                self._z_stage().move_absolute(float(z_target))
+            except TypeError:
+                # some implementations accept axis separately; fall back if needed
+                self._z_stage().move_absolute(float(z_target))
+
+            # Acquire counts multiple times and take median
+            samples = []
+            for _ in range(times_to_avg):
+                try:
+                    samples.append(float(self._time_tagger().get_counts()))
+                except Exception:
+                    self.log.exception('Failed to read counts from time_tagger')
+                    samples.append(np.nan)
+                if dwell_time_s and dwell_time_s > 0:
+                    time.sleep(float(dwell_time_s))
+
+            # Prefer the stage-reported position if available
+            try:
+                z_readback = float(self._z_stage().get_position(1))
+            except Exception:
+                try:
+                    z_readback = float(self._z_stage().get_position())
+                except Exception:
+                    z_readback = float(z_target)
+
+            x_data.append(z_readback)
+            y_data_avg.append(float(np.nanmedian(samples)))
+
+            opti_data = {'x': np.array(x_data, dtype=float), 'y': np.array(y_data_avg, dtype=float)}
+            self.sigZOptimizeUpdateGraph.emit(opti_data)
+
+        return np.array(x_data, dtype=float), np.array(y_data_avg, dtype=float)
 
     def fine_scan(self, v_forward, times_to_avg, DWELL_TIME):
         y_data_avg = []
@@ -632,11 +694,174 @@ class ScanningOptimizeLogic(LogicBase):
         self.sigZStageStartup.emit(curr_pos)
         return
 
+    def stop_optimize(self):
+        """Stop the optimizer, stop any running scanner scan, restore stashed scan settings, and unlock."""
+        with self._thread_lock:
+            if self.module_state() == 'idle':
+                self.sigOptimizeStateChanged.emit(False, dict(), None)
+                return 0
+
+            # Stop scan_logic scan if still running
+            try:
+                if self._scan_logic().module_state() != 'idle':
+                    err = self._scan_logic().stop_scan()
+                else:
+                    err = 0
+            except Exception:
+                self.log.exception('Failed to stop scan_logic scan')
+                err = -1
+
+            # Restore previous scan settings
+            if self._stashed_scan_settings:
+                try:
+                    self._scan_logic().set_scan_settings(self._stashed_scan_settings)
+                except Exception:
+                    self.log.exception('Failed to restore stashed scan settings')
+            self._stashed_scan_settings = dict()
+
+            # Unlock optimizer module
+            try:
+                self.module_state.unlock()
+            except Exception:
+                pass
+
+            self.sigOptimizeStateChanged.emit(False, dict(), None)
+            return err
+
+    def _get_pos_from_2d_gauss_fit(self, xy, data):
+        """Fit a 2D Gaussian and return (optimal_position, best_fit, fit_result)."""
+        model = Gaussian2D()
+        try:
+            fit_result = model.fit(data, x=xy, **model.estimate_peak(data, xy))
+        except Exception:
+            x_min, x_max = xy[0].min(), xy[0].max()
+            y_min, y_max = xy[1].min(), xy[1].max()
+            x_middle = (x_max - x_min) / 2 + x_min
+            y_middle = (y_max - y_min) / 2 + y_min
+            self.log.exception('2D Gaussian fit unsuccessful.')
+            return (x_middle, y_middle), None, None
+
+        return (
+            (fit_result.best_values['center_x'], fit_result.best_values['center_y']),
+            fit_result.best_fit.reshape(xy[0].shape),
+            fit_result,
+        )
+
+    def _prep_1d_fit_xy(self, x, y):
+        """Sanitize 1D fit data.
+
+        - removes NaN/inf
+        - sorts by x
+        - merges duplicate x by taking median y
+        """
+        x = np.asarray(x, dtype=float)
+        y = np.asarray(y, dtype=float)
+        m = np.isfinite(x) & np.isfinite(y)
+        x = x[m]
+        y = y[m]
+        if x.size < 3:
+            return x, y
+
+        order = np.argsort(x)
+        x = x[order]
+        y = y[order]
+
+        # Merge duplicates in x (stage readback can repeat)
+        ux, inv = np.unique(x, return_inverse=True)
+        if ux.size != x.size:
+            y_med = np.zeros_like(ux, dtype=float)
+            for i in range(ux.size):
+                y_med[i] = float(np.nanmedian(y[inv == i]))
+            x, y = ux, y_med
+
+        return x, y
+
+    def _smooth_1d(self, y, window=7):
+        """Light smoothing for peak finding; keeps length identical."""
+        y = np.asarray(y, dtype=float)
+        if y.size < 3:
+            return y
+        w = int(max(3, window))
+        if w % 2 == 0:
+            w += 1
+        if w > y.size:
+            w = y.size if y.size % 2 == 1 else y.size - 1
+        if w < 3:
+            return y
+        kernel = np.ones(w, dtype=float) / w
+        pad = w // 2
+        ypad = np.pad(y, (pad, pad), mode='edge')
+        return np.convolve(ypad, kernel, mode='valid')
+
+    def _get_pos_from_1d_gauss_fit(self, x, data):
+        """Fit a 1D Gaussian and return (optimal_position, best_fit, fit_result).
+
+        This version is tuned to be robust for z-stage focus scans:
+        - sanitize x/y
+        - use smoothed argmax as center guess
+        - apply reasonable bounds
+        - apply weights that emphasize the peak region
+        - fall back to argmax if fit is unreliable
+        """
+        x, data = self._prep_1d_fit_xy(x, data)
+        if x.size < 3:
+            if x.size == 0:
+                return (0.0,), None, None
+            return (float(x[np.argmax(data)]),), None, None
+
+        y = np.asarray(data, dtype=float)
+
+        # Robust initial center guess
+        y_smooth = self._smooth_1d(y, window=min(11, max(3, (y.size // 15) * 2 + 1)))
+        center0 = float(x[int(np.nanargmax(y_smooth))])
+
+        # Estimate a reasonable sigma from scan span (fallback)
+        span = float(np.max(x) - np.min(x))
+        if span <= 0:
+            return (center0,), None, None
+        dx = float(np.min(np.diff(x))) if x.size > 1 else span
+        sigma_min = max(dx, span / max(10.0, y.size))
+        sigma_max = max(sigma_min * 2, span / 2.0)
+
+        # Weights: emphasize region around the expected peak
+        wscale = max(span / 6.0, sigma_min)
+        weights = 1.0 / (1.0 + ((x - center0) / wscale) ** 2)
+
+        model = Gaussian()
+        try:
+            # Start with model defaults then tighten bounds
+            p0 = model.estimate_peak(y, x)
+            p0['center'] = center0
+            # Build lmfit Parameters from p0 by doing a quick fit with bounds
+            fit_result = model.fit(
+                y,
+                x=x,
+                weights=weights,
+                center=(center0, float(np.min(x)), float(np.max(x))),
+                sigma=(p0.get('sigma', span / 6.0), sigma_min, sigma_max),
+                amplitude=(max(float(np.nanmax(y) - np.nanmedian(y)), 0.0), 0.0, None),
+                offset=(float(np.nanmedian(y)), float(np.nanpercentile(y, 1)), float(np.nanpercentile(y, 99))),
+            )
+        except Exception:
+            self.log.exception('1D Gaussian fit unsuccessful; falling back to argmax.')
+            return (center0,), None, None
+
+        center = float(fit_result.best_values.get('center', center0))
+        sigma = float(fit_result.best_values.get('sigma', sigma_min))
+
+        # Quality gates / fallback
+        if (not getattr(fit_result, 'success', True)) or not (np.min(x) <= center <= np.max(x)):
+            return (center0,), None, fit_result
+        if sigma <= sigma_min * 1.01 or sigma >= sigma_max * 0.99:
+            # sigma pinned to bounds -> unstable fit
+            return (center0,), None, fit_result
+
+        return (center,), fit_result.best_fit, fit_result
 
 class OptimizerScanSequence:
-    def __init__(self, axes, dimensions=[2,1], sequence=None):
+    def __init__(self, axes, dimensions=None, sequence=None):
         self._avail_axes = axes
-        self._optimizer_dim = dimensions
+        self._optimizer_dim = [2, 1] if dimensions is None else dimensions
         self._sequence = None
         if sequence in self._available_opt_seqs_raw():
             self.sequence = sequence
@@ -802,4 +1027,3 @@ class OptimizerScanSequence:
             out_seqs = remove_1d_in_2d_axes_dupl(out_seqs)
 
         return out_seqs
-
