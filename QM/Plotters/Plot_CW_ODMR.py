@@ -6,7 +6,7 @@ from scipy.optimize import curve_fit
 NUM_DIPS = 2  # Change to fit multiple dips (1, 2, 3, etc.)
 
 # Load data
-f = np.load("C:/Users/attocube/Documents/MontanaQudiAttocube/MontanaConfocalAttocube/QM/save_dir/2026-03-31/#367_cw_odmr_112736/arrays.npz")
+f = np.load("/MontanaConfocalAttocube/QM/save_dir/2026-03-31/#367_cw_odmr_112736/arrays.npz")
 f_vec = f["IF_frequencies"] / 1e6  # MHz
 counts = f["counts_data"] / 1000   # kcounts
 

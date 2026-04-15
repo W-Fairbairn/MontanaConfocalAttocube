@@ -40,6 +40,8 @@ from PyQt6.QtWidgets import (
 from experiment_base import ExperimentBase
 
 settings = QSettings("Diamond", "QM_Rabi")
+
+
 class SettingsDialogRabi(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -50,7 +52,6 @@ class SettingsDialogRabi(QDialog):
         self.num_points = QLineEdit(str(self.num_points), parent=self)
         self.num_averages = QLineEdit(str(self.num_averages), parent=self)
         self.resonant_Frequency = QLineEdit(str(self.resonant_Frequency), parent=self)
-
 
         buttons = (
             QDialogButtonBox.StandardButton.Ok
@@ -105,6 +106,8 @@ class SettingsDialogRabi(QDialog):
         except (ValueError, TypeError):
             print("Invalid Inputs, using default values.")
             return 0.0, 500, 50, 10000000
+
+
 class Rabi(ExperimentBase):
     def __init__(self):
 
@@ -135,7 +138,7 @@ class Rabi(ExperimentBase):
         self.counts, self.counts_ref, self.iteration, self.time_tags = None, None, None, None
 
         freq, self.length_run, self.num_points, self.n_avg = SettingsDialogRabi.get_settings()
-        self.t_vec = np.arange(4, self.length_run // 4, max(1, self.length_run // (4 * self.num_points)))  # Pulse durations in clock cycles (4ns)
+        self.t_vec = np.arange(4, self.length_run // 4, max(1, self.length_run // (4 * self.num_points)))
         ###################
         # The QUA program #
         ###################
@@ -163,7 +166,6 @@ class Rabi(ExperimentBase):
                     update_frequency("NV", freq * u.MHz)
                     play("x180" * amp(1), "NV", duration=t)
                     align()  # Play the laser pulse after the mw pulse
-                    #wait(AOM_delay, "SPCM1")
                     play("laser_ON", "AOM2")
                     measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
                     save(counts, counts_st)  # save counts
@@ -176,7 +178,7 @@ class Rabi(ExperimentBase):
                 save(n, n_st)  # save number of iteration inside for_loop
 
             with stream_processing():
-                # Cast the data into a 1D vector, average the 1D vectors together and store the results on the OPX processor
+                # Cast the data into a 1D vector, average the 1D vectors together and store the results on the OPX
                 counts_st.buffer(len(self.t_vec)).average().save("counts")
                 counts_ref_st.buffer(len(self.t_vec)).average().save("counts_ref")
                 times_st.buffer(1000).save("time_tags")
@@ -190,6 +192,7 @@ class Rabi(ExperimentBase):
             return self.counts / self.counts_ref
         else:
             return np.zeros(len(self.t_vec))
+
     def get_err(self):
         if self.counts is not None and self.counts_ref is not None and self.iteration is not None:
             count_err = np.sqrt(self.counts * self.iteration) / self.iteration
@@ -215,6 +218,14 @@ class Rabi(ExperimentBase):
         self.save_data_dict.update({"normalized_data": self.counts / self.counts_ref})
         self.save_data_dict.update({"iteration": np.array([int(self.iteration)])})
         data_handler.save_data(data=self.save_data_dict, name="_".join(script_name.split("_")[1:]).split(".")[0])
+
+    def get_plot_info(self):
+        return {
+            "x_text": "Time",
+            "x_units": "ns",
+            "y_text": "Normalised signal",
+            "y_units": "arb. units",
+        }
 
     def fit_func(self, t, A, f, T2, phi, C):
         t = t * 1E-9  # Convert to seconds for fitting
@@ -273,10 +284,6 @@ class Rabi(ExperimentBase):
             print(f"Error in start_rabi: {e}")
             import traceback
             traceback.print_exc()
-
-
-
-
 
 
 '''

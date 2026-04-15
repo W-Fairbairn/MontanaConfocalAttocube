@@ -75,3 +75,10 @@ class ExperimentBase(ABC):
         Save the experimental data to disk.
         """
         pass
+
+    @abstractmethod
+    def get_plot_info(self) -> dict:
+        """
+        Return the axis labels and units.
+        """
+        pass

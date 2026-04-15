@@ -227,6 +227,14 @@ class CW_ODMR(ExperimentBase):
         # data_handler.additional_files = {script_name: script_name, **default_additional_files}
         data_handler.save_data(data=self.save_data_dict, name=script_name.split(".")[0])
 
+    def get_plot_info(self):
+        return {
+            "x_text": "MW frequency",
+            "x_units": "GHz",
+            "y_text": "Counts",
+            "y_units": "kcps",
+        }
+
     def fit(self):
         """Fit the ODMR data with multiple Lorentzian dips"""
         x = self.get_x()

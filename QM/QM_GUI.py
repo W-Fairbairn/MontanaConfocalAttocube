@@ -31,6 +31,10 @@ from Time_Rabi import Rabi
 from Time_Rabi import SettingsDialogRabi
 from CW_ODMR_GUI import CW_ODMR
 from CW_ODMR_GUI import SettingsDialogODMR
+from Counter import Counter
+from Counter import SettingsDialogRabi as SettingsDialogCounter
+from experiment_base import ExperimentBase
+from styles import Colors, MAIN_WINDOW_STYLESHEET, PLOT_WIDGET_BG, get_textbox_palette, get_toolbar_palette
 from experiment_base import ExperimentBase
 from styles import Colors, MAIN_WINDOW_STYLESHEET, PLOT_WIDGET_BG, get_textbox_palette, get_toolbar_palette
 
@@ -71,6 +75,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setWindowTitle('Rabi Oscillation Measurement')
         elif self.experiment == "ODMR":
             self.setWindowTitle('CW Optically Detected Magnetic Resonance (ODMR)')
+        elif self.experiment == "Counter":
+            self.setWindowTitle('Photon Counter')
         else:
             self.setWindowTitle('Quantum Measurement')
 
@@ -86,16 +92,28 @@ class MainGui(QtCore.QObject):
         self.running: bool = False
         self.program: ExperimentBase | None = None
         self.settings_dialog = None
-
+        self.experiments = ["Counter", "Rabi", "ODMR"]
         # Load the last selected experiment from persistent storage, default to "Rabi"
-        self.current_experiment: str = settings.value("current_experiment", "Rabi")
+        self.current_experiment: str = settings.value("current_experiment", "Counter")
+
+        # Store graph data for each experiment to enable flipping between them
+        self.graph_data_storage = {}
+        for exp in self.experiments:
+            if exp not in settings.value("graph_data_storage", {}):
+                settings.setValue(f"graph_data_storage/{exp}", {
+                    "x_data": np.array([]),
+                    "y_data": np.array([]),
+                    "x_fit": np.array([]),
+                    "y_fit": np.array([]),
+                    "fit_text": ""
+                })
 
         # Create the main window
         self._mw = MainWindow(gui_ref=self, experiment=self.current_experiment)
 
         # Create experiment selector dropdown
         self.experiment_selector = QComboBox()
-        self.experiment_selector.addItems(["Rabi", "ODMR"])
+        self.experiment_selector.addItems(self.experiments)
         self.experiment_selector.setCurrentText(self.current_experiment)
         self.experiment_selector.currentTextChanged.connect(self.on_experiment_changed)
 
@@ -115,7 +133,7 @@ class MainGui(QtCore.QObject):
 
         self.fit_image = pg.PlotDataItem(np.array([]),
                                          np.array([]),
-                                         pen=pg.mkPen(palette.c2, width=2))
+                                         pen=pg.mkPen(palette.c2, width=3))
 
         # Add the display item to the ViewWidget, which was defined in the UI file.
         self._mw.rabi_plot_PlotWidget.addItem(self.image)
@@ -147,13 +165,20 @@ class MainGui(QtCore.QObject):
 
     def init_program(self):
         """Initialize the appropriate program based on current experiment"""
-        if self.current_experiment == "Rabi":
-            self.program = Rabi()
-        elif self.current_experiment == "ODMR":
-            self.program = CW_ODMR()
+        match self.current_experiment:
+            case "Rabi":
+                self.program = Rabi()
+                self.settings_dialog = SettingsDialogRabi(self._mw)
+            case "ODMR":
+                self.program = CW_ODMR()
+                self.settings_dialog = SettingsDialogODMR(self._mw)
+            case "Counter":
+                self.program = Counter()
+                self.settings_dialog = SettingsDialogCounter(self._mw)
+        self.update_plot_labels()
 
     def on_experiment_changed(self, experiment_name):
-        """Handle experiment selection change"""
+        """Handle experiment selection change, preserving graph data"""
         if self.running:
             QtWidgets.QMessageBox.warning(
                 self._mw,
@@ -162,6 +187,9 @@ class MainGui(QtCore.QObject):
             )
             self.experiment_selector.setCurrentText(self.current_experiment)
             return
+
+        # Save current experiment's graph data before switching
+        self.save_graph_data()
 
         self.current_experiment = experiment_name
         self._mw.experiment = experiment_name
@@ -173,10 +201,61 @@ class MainGui(QtCore.QObject):
         # Re-initialize program with new experiment type
         self.init_program()
 
-        # Clear plot data
-        self.fit_image.setData(np.array([]), np.array([]))
-        self._mw.fit_results_Text.setPlainText("")
-        self.image.setData(np.array([]), np.array([]))
+        # Update plot labels based on experiment
+        self.update_plot_labels()
+
+        # Restore the saved graph data for the new experiment
+        self.restore_graph_data()
+
+    def update_plot_labels(self):
+        """Update plot axis labels based on the current experiment"""
+        try:
+            labels = self.program.get_plot_info()
+            self._mw.rabi_plot_PlotWidget.setLabel(axis='left', text=labels["y_text"], units=labels["y_units"])
+            self._mw.rabi_plot_PlotWidget.setLabel(axis='bottom', text=labels["x_text"], units=labels["x_units"])
+        except Exception as e:
+            print(f"Error getting plot info from program: {e}")
+            self._mw.rabi_plot_PlotWidget.setLabel(axis='left', text="y data", units="")
+            self._mw.rabi_plot_PlotWidget.setLabel(axis='bottom', text="x data", units="")
+
+
+    def save_graph_data(self):
+        """Save current graph data for the active experiment"""
+        try:
+            # Store in the appropriate experiment slot
+            x_data = self.image.xData if self.image.xData is not None else np.array([])
+            y_data = self.image.yData if self.image.yData is not None else np.array([])
+            x_fit = self.fit_image.xData if self.fit_image.xData is not None else np.array([])
+            y_fit = self.fit_image.yData if self.fit_image.yData is not None else np.array([])
+
+            self.graph_data_storage[self.current_experiment] = {
+                "x_data": x_data.copy() if len(x_data) > 0 else np.array([]),
+                "y_data": y_data.copy() if len(y_data) > 0 else np.array([]),
+                "x_fit": x_fit.copy() if len(x_fit) > 0 else np.array([]),
+                "y_fit": y_fit.copy() if len(y_fit) > 0 else np.array([]),
+                "fit_text": self._mw.fit_results_Text.toPlainText()
+            }
+        except Exception as e:
+            print(f"Error saving graph data: {e}")
+
+    def restore_graph_data(self):
+        """Restore saved graph data for the current experiment"""
+        data = self.graph_data_storage.get(self.current_experiment, {})
+        x_data = data.get("x_data", np.array([]))
+        y_data = data.get("y_data", np.array([]))
+        x_fit = data.get("x_fit", np.array([]))
+        y_fit = data.get("y_fit", np.array([]))
+        fit_text = data.get("fit_text", "")
+
+        self.image.setData(x_data, y_data)
+
+        # Only set fit data if it exists
+        if len(x_fit) > 0 and len(y_fit) > 0:
+            self.fit_image.setData(x_fit, y_fit)
+        else:
+            self.fit_image.setData(np.array([]), np.array([]))
+
+        self._mw.fit_results_Text.setPlainText(fit_text)
 
     def save_experiment_selection(self):
         """Save the currently selected experiment to QSettings"""
@@ -205,22 +284,26 @@ class MainGui(QtCore.QObject):
             self.program.stop_program()
 
     def fit_clicked(self):
-        x, y, text = self.program.fit()
-        self.fit_image.setData(x, y)
-        self._mw.fit_results_Text.setPlainText(text)
-        pass
+        """Fit the data - for Counter, rolling average is automatic; for others, perform fitting"""
+        if self.current_experiment == "Counter":
+            # For Counter, rolling average is already displayed via continuous update
+            QtWidgets.QMessageBox.information(
+                self._mw,
+                "Rolling Average",
+                "The red line shows the 10-point rolling average, which updates continuously during measurement."
+            )
+        else:
+            # For Rabi and ODMR, compute and display the fit
+            x, y, text = self.program.fit()
+            if x is not None and y is not None:
+                self.fit_image.setData(x, y)
+                self._mw.fit_results_Text.setPlainText(text)
 
     def save_clicked(self):
         self.program.save_data()
 
     def settings_clicked(self):
-        if self.current_experiment == "Rabi":
-            settings_dialog = SettingsDialogRabi(self._mw)
-        elif self.current_experiment == "ODMR":
-            settings_dialog = SettingsDialogODMR(self._mw)
-        else:
-            return
-        settings_dialog.exec()
+        self.settings_dialog.exec()
 
     def show(self):
         self._mw.show()
@@ -244,6 +327,17 @@ class MainGui(QtCore.QObject):
                 y_data = self.program.get_y()
                 if x_data is not None and y_data is not None:
                     self.image.setData(x_data, y_data)
+
+                    # For Counter experiment, also update the rolling average fit line and statistics
+                    if self.current_experiment == "Counter":
+                        x_fit, y_fit, fit_text = self.program.fit()
+                        if len(x_fit) > 0 and len(y_fit) > 0:
+                            self.fit_image.setData(x_fit, y_fit)
+                            # Update the fit results text with average counts
+                            self._mw.fit_results_Text.setPlainText(fit_text)
+
+                    # Continuously save data during measurement
+                    self.save_graph_data()
             except Exception as e:
                 print(f"Error updating plot data: {e}")
 
