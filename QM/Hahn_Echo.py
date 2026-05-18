@@ -15,193 +15,438 @@ Next steps before going to the next node:
     -
 """
 
-from qm import QuantumMachinesManager
+from __future__ import annotations
+
+import time
+from pathlib import Path
+
+import numpy as np
+from PyQt6.QtCore import QSettings
+from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QLineEdit, QVBoxLayout
+from qm import QuantumMachinesManager, SimulationConfig
 from qm.qua import *
-from qm import SimulationConfig
-import matplotlib.pyplot as plt
-from configuration import *
 from qualang_tools.loops import from_array
 from qualang_tools.results.data_handler import DataHandler
+from scipy.optimize import curve_fit
 
-##################
-#   Parameters   #
-##################
-# Parameters Definition
-num_points = 40
-length_run = 5000
-t_vec = np.arange(4, length_run//4, max(1,length_run//(4*num_points)))
-n_avg = 100_000_000
-# Rabi frequency for the pi pulse, used to determine the pi pulse duration from the configuration
-rabi_frequency = 7.43 * u.MHz
-pi_pulse_len = 1/(2*rabi_frequency) / 1E-9
-# pulse_len//4*4 to round to the nearest multiple of 4ns, clock cycle of the OPX, to avoid compilation errors
-config["pulses"]["x180_pulse"]["length"] = pi_pulse_len//4*4
-config["pulses"]["x90_pulse"]["length"] = pi_pulse_len/2//4*4
+from configuration import *  # noqa: F403
+from experiment_base import ExperimentBase
 
-# Determine reference readout during single laser pulse
-reference_wait = 100//4  # in clock cycles
-reference_readout = reference_wait >= 4
+settings = QSettings("Diamond", "QM_HahnEcho")
 
-# Data to save
-save_data_dict = {
-    "n_avg": n_avg,
-    "t_vec": t_vec,
-    "config": config,
-}
 
-###################
-# The QUA program #
-###################
-with program() as hahn_echo:
-    counts = declare(int)  # saves number of photon counts
-    times = declare(int, size=100)  # QUA vector for storing the time-tags
-    counts_1_st = declare_stream()  # stream for counts
-    counts_2_st = declare_stream()  # stream for counts
-    counts_1_ref_st = declare_stream()  # stream for counts
-    counts_2_ref_st = declare_stream()  # stream for counts
-    t = declare(int)  # variable to sweep over in time
-    n = declare(int)  # variable to for_loop
-    n_st = declare_stream()  # stream to save iterations
+class SettingsDialogHahnEcho(QDialog):
+    """Settings dialog persisted in QSettings."""
 
-    # Spin initialization
-    play("laser_ON", "AOM1")
-    wait(wait_for_initialization * u.ns, "AOM1")
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.load_settings()
+        self.setWindowTitle("Hahn Echo Settings")
 
-    # Hahn echo sequence
-    with for_(n, 0, n < n_avg, n + 1):
-        with for_(*from_array(t, t_vec)):
-            update_frequency("NV", 100 * u.MHz)
-            align()
-            # First Ramsey sequence with x90 - idle time - x90
-            play("x90" * amp(1), "NV")  # Pi/2 pulse to qubit
-            wait(t, "NV")  # Variable idle time
-            play("x180" * amp(1), "NV")  # Pi pulse to qubit
-            wait(t, "NV")  # Variable idle time
-            play("x90" * amp(1), "NV")  # Pi/2 pulse to qubit
-            align()  # Play the laser pulse after the Echo sequence
-            # Measure and detect the photons on SPCM1
-            play("laser_ON", "AOM2")
-            measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
-            save(counts, counts_1_st)  # save counts
-            # Measure reference photon counts at end of laser pulse
-            if reference_readout:
-                wait(reference_wait, "SPCM1")
-                measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
-            else:
-                assign(counts, 1)
-            save(counts, counts_1_ref_st)
+        self.time_max = QLineEdit(str(self.time_max), parent=self)
+        self.num_points = QLineEdit(str(self.num_points), parent=self)
+        self.num_averages = QLineEdit(str(self.num_averages), parent=self)
+        self.odmr_if_freq_mhz = QLineEdit(str(self.odmr_if_freq_mhz), parent=self)
+        self.rabi_freq_mhz = QLineEdit(str(self.rabi_freq_mhz), parent=self)
+        self.gain = QLineEdit(str(self.gain), parent=self)
 
-            wait(wait_between_runs * u.ns)
+        buttons = QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        button_box = QDialogButtonBox(buttons)
+        button_box.accepted.connect(self.accept)  # type: ignore
+        button_box.rejected.connect(self.reject)  # type: ignore
 
-            align()
-            # Second Ramsey sequence with x90 - idle time - -x90
-            play("x90" * amp(1), "NV")  # Pi/2 pulse to qubit
-            wait(t, "NV")  # Variable idle time
-            play("x180" * amp(1), "NV")  # Pi pulse to qubit
-            wait(t, "NV")  # variable delay in spin Echo
-            play("-x90" * amp(1), "NV")  # Pi/2 pulse to qubit
-            align()  # Play the laser pulse after the Echo sequence
-            # Measure and detect the photons on SPCM1
-            play("laser_ON", "AOM2")
-            measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
-            save(counts, counts_2_st)  # save counts
-            # Measure reference photon counts at end of laser pulse
-            if reference_readout:
-                wait(reference_wait, "SPCM1")
-                measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
-            else:
-                assign(counts, 1)
-            save(counts, counts_2_ref_st)
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel("Time max (ns, for single τ):"))
+        layout.addWidget(self.time_max)
+        layout.addWidget(QLabel("Number of points:"))
+        layout.addWidget(self.num_points)
+        layout.addWidget(QLabel("Number of averages:"))
+        layout.addWidget(self.num_averages)
+        layout.addWidget(QLabel("ODMR IF frequency (MHz):"))
+        layout.addWidget(self.odmr_if_freq_mhz)
+        layout.addWidget(QLabel("Rabi frequency for π pulse (MHz):"))
+        layout.addWidget(self.rabi_freq_mhz)
+        layout.addWidget(QLabel("Octave RF gain (dB):"))
+        layout.addWidget(self.gain)
+        layout.addWidget(button_box)
+        self.setLayout(layout)
 
-            wait(wait_between_runs * u.ns)
+    def load_settings(self):
+        self.time_max = int(settings.value("time_max", 100000))
+        self.num_points = int(settings.value("num_points", 30))
+        self.num_averages = int(settings.value("num_averages", 50_000_000))
+        self.odmr_if_freq_mhz = float(settings.value("odmr_if_freq_mhz", 23.0))
+        self.rabi_freq_mhz = float(settings.value("rabi_freq_mhz", 7.65))
+        self.gain = int(settings.value("gain", -5))
 
-        save(n, n_st)  # save number of iteration inside for_loop
+    def accept(self):
+        settings.setValue("time_max", self.time_max.text())
+        settings.setValue("num_points", self.num_points.text())
+        settings.setValue("num_averages", self.num_averages.text())
+        settings.setValue("odmr_if_freq_mhz", self.odmr_if_freq_mhz.text())
+        settings.setValue("rabi_freq_mhz", self.rabi_freq_mhz.text())
+        settings.setValue("gain", self.gain.text())
+        super().accept()
 
-    with stream_processing():
-        # Cast the data into a 1D vector, average the 1D vectors together and store the results on the OPX processor
-        counts_1_st.buffer(len(t_vec)).average().save("counts1")
-        counts_1_ref_st.buffer(len(t_vec)).average().save("counts1_ref")
-        counts_2_st.buffer(len(t_vec)).average().save("counts2")
-        counts_2_ref_st.buffer(len(t_vec)).average().save("counts2_ref")
-        n_st.save("iteration")
+    @staticmethod
+    def get_settings():
+        try:
+            time_max = int(settings.value("time_max", 100000))
+            num_points = int(settings.value("num_points", 30))
+            n_avg = int(settings.value("num_averages", 50_000_000))
+            odmr_if_freq_mhz = float(settings.value("odmr_if_freq_mhz", 23.0))
+            rabi_freq_mhz = float(settings.value("rabi_freq_mhz", 7.65))
+            gain = int(settings.value("gain", -5))
+            return time_max, num_points, n_avg, odmr_if_freq_mhz, rabi_freq_mhz, gain
+        except (ValueError, TypeError):
+            return 100000, 30, 50_000_000, 23.0, 7.65, -5
 
-#####################################
-#  Open Communication with the QOP  #
-#####################################
-qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name, octave_calibration_db_path=calibration_db_dir)
 
-#######################
-# Simulate or execute #
-#######################
-simulate = False
+class HahnEcho(ExperimentBase):
+    def __init__(self):
+        self.qmm = None
+        self.qm = None
+        self.job = None
 
-if simulate:
-    # Simulates the QUA program for the specified duration
-    simulation_config = SimulationConfig(duration=10_000)  # In clock cycles = 4ns
-    # Simulate blocks python until the simulation is done
-    job = qmm.simulate(config, hahn_echo, simulation_config)
-    # Get the simulated samples
-    samples = job.get_simulated_samples()
-    # Plot the simulated samples
-    samples.con1.plot()
-    # Get the waveform report object
-    waveform_report = job.get_simulated_waveform_report()
-    # Cast the waveform report to a python dictionary
-    waveform_dict = waveform_report.to_dict()
-    # Visualize and save the waveform report
-    waveform_report.create_plot(samples, plot=True, save_path=str(Path(__file__).resolve()))
-else:
-    # Open the quantum machine
-    qm = qmm.open_qm(config, close_other_machines=True)
-    # Send the QUA program to the OPX, which compiles and executes it
-    # execute QUA program
-    job = qm.execute(hahn_echo)
-    # Get results from QUA program
-    results = fetching_tool(
-        job, data_list=["counts1", "counts1_ref", "counts2", "counts2_ref", "iteration"], mode="live"
-    )
-    # Live plotting
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 6), sharex=True)
-    interrupt_on_close(fig, job)  # Interrupts the job when closing the figure
+        self.is_running = False
 
-    while results.is_processing():
-        # Fetch results
-        counts1, counts1_ref, counts2, counts2_ref, iteration = results.fetch_all()
-        # Compute normalized signals
-        norm1 = counts1 / counts1_ref
-        norm2 = counts2 / counts2_ref
-        diff = norm1 - norm2
-        # Progress bar
-        progress_counter(iteration, n_avg, start_time=results.get_start_time())
+        self.length_run = None
+        self.num_points = None
+        self.t_vec = None
+        self.n_avg = None
 
-        # Plot data
-        ax1.cla()
-        # x4 to account for 4ns clock cycle, x2 for the two idle times
-        ax1.scatter(8 * t_vec, norm1, label="x90_idle_x180_idle_x90")
-        ax1.set_ylabel("Norm. Signal")
-        ax1.set_title("Hahn Echo iteration: " + str(iteration))
-        ax1.legend()
+        self.odmr_if_freq = None
+        self.rabi_frequency_mhz = None
+        self.gain = None
 
-        ax2.cla()
-        ax2.scatter(8 * t_vec, norm2, label="x90_idle_x180_idle_-x90")
-        ax2.set_ylabel("Norm. Signal")
-        ax2.legend()
+        self.hahn_echo = None
 
-        ax3.cla()
-        ax3.scatter(8 * t_vec, diff, color="black", label="Difference")
-        ax3.set_xlabel("Hahn echo idle time [ns]")
-        ax3.set_ylabel("ΔSignal")
-        ax3.legend()
-        plt.pause(0.1)
+        self.original_rf_gain = None
+        self.original_output_mode = None
 
-    # Save results
-    script_name = Path(__file__).name
-    data_handler = DataHandler(root_data_folder=save_dir)
-    save_data_dict.update({"counts1_data": counts1})
-    save_data_dict.update({"counts1_ref_data": counts1_ref})
-    save_data_dict.update({"normalized1_data": norm1})
-    save_data_dict.update({"counts2_data": counts2})
-    save_data_dict.update({"counts2_ref_data": counts2_ref})
-    save_data_dict.update({"normalized2_data": norm2})
-    data_handler.additional_files = {script_name: script_name, **default_additional_files}
-    data_handler.save_data(data=save_data_dict, name="_".join(script_name.split("_")[1:]).split(".")[0])
+        self.counts1 = None
+        self.counts1_ref = None
+        self.counts2 = None
+        self.counts2_ref = None
+        self.iteration = None
+
+        self.save_data_dict = {"n_avg": None, "t_vec": None, "config": config}
+
+    def restore_config(self):
+        if self.original_output_mode is not None:
+            config["octaves"][octave]["RF_outputs"][1]["output_mode"] = self.original_output_mode
+        if self.original_rf_gain is not None:
+            config["octaves"][octave]["RF_outputs"][1]["gain"] = self.original_rf_gain
+
+        if self.original_rf_gain is not None and self.qm is not None:
+            try:
+                self.qm.octave.set_rf_output_gain("NV", self.original_rf_gain)
+            except Exception as e:
+                print(f"Warning: failed to restore Octave RF gain: {e}")
+
+    def _update_pulse_lengths_from_rabi_freq(self):
+        # Determine π and π/2 pulse lengths in ns, snapped to 4 ns clock.
+        pi_pulse_len_ns = (1 / (2 * (self.rabi_frequency_mhz * u.MHz))) / 1e-9  # noqa: F405
+
+        config["pulses"]["x180_pulse"]["length"] = pi_pulse_len_ns // 4 * 4
+        config["pulses"]["x90_pulse"]["length"] = (pi_pulse_len_ns / 2) // 4 * 4
+        config["pulses"]["-x90_pulse"]["length"] = (pi_pulse_len_ns / 2) // 4 * 4
+        config["pulses"]["x270_pulse"]["length"] = (pi_pulse_len_ns * 1.5) // 4 * 4
+
+    def compile_program(self):
+        self.length_run, self.num_points, self.n_avg, odmr_if_freq_mhz, rabi_freq_mhz, self.gain = (
+            SettingsDialogHahnEcho.get_settings()
+        )
+
+        self.odmr_if_freq = odmr_if_freq_mhz * u.MHz  # noqa: F405
+        self.rabi_frequency_mhz = rabi_freq_mhz
+
+        # Save original values to restore later so other experiments aren't affected.
+        self.original_rf_gain = config["octaves"][octave]["RF_outputs"][1].get("gain")
+        self.original_output_mode = config["octaves"][octave]["RF_outputs"][1].get("output_mode")
+
+        # Apply requested gain for this experiment
+        config["octaves"][octave]["RF_outputs"][1]["gain"] = self.gain
+
+        self._update_pulse_lengths_from_rabi_freq()
+
+        self.t_vec = np.arange(
+            4, self.length_run // 4, max(1, self.length_run // (4 * self.num_points))
+        )
+
+        self.save_data_dict = {"n_avg": self.n_avg, "t_vec": self.t_vec, "config": config}
+
+        self.qmm = QuantumMachinesManager(
+            host=qop_ip, cluster_name=cluster_name, octave_calibration_db_path=calibration_db_dir
+        )
+        self.qm = self.qmm.open_qm(config, close_other_machines=True)
+
+        # Apply gain on the Octave hardware as well (best-effort)
+        try:
+            self.qm.octave.set_rf_output_gain("NV", self.gain)
+        except Exception as e:
+            print(f"Warning: failed to set Octave RF gain for NV to {self.gain} dB: {e}")
+
+        # Clear data arrays from previous runs
+        self.counts1 = self.counts1_ref = self.counts2 = self.counts2_ref = self.iteration = None
+
+        with program() as self.hahn_echo:
+            counts = declare(int)
+            times = declare(int, size=100)
+
+            counts_1_st = declare_stream()
+            counts_2_st = declare_stream()
+            counts_1_ref_st = declare_stream()
+            counts_2_ref_st = declare_stream()
+
+            t = declare(int)
+            n = declare(int)
+            n_st = declare_stream()
+
+            update_frequency("NV", self.odmr_if_freq)
+
+            with for_(n, 0, n < self.n_avg, n + 1):
+                with for_(*from_array(t, self.t_vec)):
+                    # Sequence 1: x90 - τ - x180 - τ - x90
+                    align()
+                    play("x90" * amp(1), "NV")
+                    wait(t, "NV")
+                    play("x180" * amp(1), "NV")
+                    wait(t, "NV")
+                    play("x90" * amp(1), "NV")
+
+                    align()
+                    play("laser_ON", "AOM2")
+                    measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
+                    save(counts, counts_1_st)
+                    measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
+                    save(counts, counts_1_ref_st)
+                    wait(wait_between_runs * u.ns)
+
+                    # Sequence 2: x90 - τ - x180 - τ - -x90
+                    align()
+                    play("x90" * amp(1), "NV")
+                    wait(t, "NV")
+                    play("x180" * amp(1), "NV")
+                    wait(t, "NV")
+                    play("-x90" * amp(1), "NV")
+
+                    align()
+                    play("laser_ON", "AOM2")
+                    measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
+                    save(counts, counts_2_st)
+                    measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
+                    save(counts, counts_2_ref_st)
+                    wait(wait_between_runs * u.ns)
+
+                save(n, n_st)
+
+            with stream_processing():
+                counts_1_st.buffer(len(self.t_vec)).average().save("counts1")
+                counts_1_ref_st.buffer(len(self.t_vec)).average().save("counts1_ref")
+                counts_2_st.buffer(len(self.t_vec)).average().save("counts2")
+                counts_2_ref_st.buffer(len(self.t_vec)).average().save("counts2_ref")
+                n_st.save("iteration")
+
+    def start_program(self):
+        # Always recompile to apply any setting changes
+        self.compile_program()
+        try:
+            simulate = False
+            if simulate:
+                simulation_config = SimulationConfig(duration=10_000)
+                _job = self.qmm.simulate(config, self.hahn_echo, simulation_config)
+                return
+
+            self.is_running = True
+            self.job = self.qm.execute(self.hahn_echo)
+            results = fetching_tool(
+                self.job,
+                data_list=["counts1", "counts1_ref", "counts2", "counts2_ref", "iteration"],
+                mode="live",
+            )
+            while results.is_processing() and self.is_running:
+                self.counts1, self.counts1_ref, self.counts2, self.counts2_ref, self.iteration = (
+                    results.fetch_all()
+                )
+                time.sleep(0.01)
+
+            if self.counts1 is not None and self.counts1_ref is not None:
+                self.save_data()
+        except Exception as e:
+            print(f"Error in HahnEcho.start_program: {e}")
+            import traceback
+
+            traceback.print_exc()
+        finally:
+            self.restore_config()
+
+    def stop_program(self):
+        self.is_running = False
+        try:
+            if self.job is not None:
+                self.job.halt()
+        except Exception as e:
+            print(f"Error halting Hahn Echo job: {e}")
+        finally:
+            self.restore_config()
+
+    def get_x(self) -> np.ndarray:
+        if self.t_vec is None:
+            return np.array([])
+        return 8 * self.t_vec  # 2τ in ns (t is 4 ns units, used twice)
+
+    def _safe_norm(self, a, b):
+        if a is None or b is None:
+            return None
+        b_safe = np.where(b == 0, np.nan, b)
+        return a / b_safe
+
+    def get_y(self) -> np.ndarray:
+        if self.t_vec is None:
+            return np.array([])
+
+        n1 = self._safe_norm(self.counts1, self.counts1_ref)
+        n2 = self._safe_norm(self.counts2, self.counts2_ref)
+        if n1 is None or n2 is None:
+            return np.zeros(len(self.t_vec))
+
+        diff = n1 - n2
+        diff = np.nan_to_num(diff, nan=0.0, posinf=0.0, neginf=0.0)
+        return diff
+
+    def save_data(self):
+        if self.t_vec is None:
+            return
+
+        script_name = Path(__file__).name
+        data_handler = DataHandler(root_data_folder=save_dir)
+
+        n1 = self._safe_norm(self.counts1, self.counts1_ref)
+        n2 = self._safe_norm(self.counts2, self.counts2_ref)
+        diff = None
+        if n1 is not None and n2 is not None:
+            diff = n1 - n2
+
+        self.save_data_dict.update(
+            {
+                "counts1_data": self.counts1,
+                "counts1_ref_data": self.counts1_ref,
+                "normalized1_data": n1,
+                "counts2_data": self.counts2,
+                "counts2_ref_data": self.counts2_ref,
+                "normalized2_data": n2,
+                "diff_data": diff,
+                "iteration": np.array([int(self.iteration)]) if self.iteration is not None else None,
+            }
+        )
+
+        data_handler.additional_files = {script_name: script_name, **default_additional_files}
+        data_handler.save_data(data=self.save_data_dict, name="hahn_echo")
+
+    def get_plot_info(self):
+        return {
+            "x_text": "2τ",
+            "x_units": "ns",
+            "y_text": "Δ Normalised signal",
+            "y_units": "arb. units",
+        }
+
+    @staticmethod
+    def _t2_decay(t, A, T2, C):
+        """Single exponential decay used for Hahn Echo T2 fit.
+
+        Model: A * exp(-(t/T2)) + C
+
+        Notes:
+            - t and T2 are in the same units (we fit in ns)
+            - T2 is clipped to stay positive for numerical stability
+        """
+        t = np.asarray(t)
+        T2 = np.clip(T2, 1e-12, np.inf)
+        return A * np.exp(-(t / T2)) + C
+
+    def _get_norm_traces(self):
+        """Return (x, norm1, norm2, diff) or (None, None, None, None) if unavailable."""
+        x = self.get_x()
+        if x.size == 0:
+            return None, None, None, None
+
+        n1 = self._safe_norm(self.counts1, self.counts1_ref)
+        n2 = self._safe_norm(self.counts2, self.counts2_ref)
+        if n1 is None or n2 is None:
+            return None, None, None, None
+
+        # Ensure numpy arrays
+        n1 = np.asarray(n1)
+        n2 = np.asarray(n2)
+        diff = np.nan_to_num(n1 - n2, nan=0.0, posinf=0.0, neginf=0.0)
+        return np.asarray(x), np.nan_to_num(n1, nan=0.0, posinf=0.0, neginf=0.0), np.nan_to_num(
+            n2, nan=0.0, posinf=0.0, neginf=0.0
+        ), diff
+
+    def fit(self):
+        """Fit the difference trace to extract T2.
+
+        Returns:
+            (x_fit, y_fit, text)
+        """
+        x, norm1, norm2, diff = self._get_norm_traces()
+        if x is None or diff is None:
+            return np.array([]), np.array([]), "No data to fit"
+
+        x_arr = np.asarray(x, dtype=float)
+        y_arr = np.asarray(diff, dtype=float)
+
+        # Basic sanity checks
+        if x_arr.size < 5:
+            return np.array([]), np.array([]), "Not enough points to fit"
+
+        # Remove any non-finite points
+        mask = np.isfinite(x_arr) & np.isfinite(y_arr)
+        x_arr = x_arr[mask]
+        y_arr = y_arr[mask]
+        if x_arr.size < 5:
+            return np.array([]), np.array([]), "Not enough finite points to fit"
+
+        # Bounds: enforce T2 >= 0
+        bounds = ([-np.inf, 0.0, -np.inf], [np.inf, np.inf, np.inf])
+
+        try:
+            # Baseline guess: median of last ~20% of points (or at least 5 points)
+            tail_n = max(5, int(0.2 * x_arr.size))
+            C0 = float(np.median(y_arr[-tail_n:]))
+
+            # Amplitude guess: early-time deviation from baseline
+            A0 = float(y_arr[0] - C0)
+            if np.isclose(A0, 0.0):
+                A0 = float(0.5 * (np.max(y_arr) - np.min(y_arr)))
+                if float(np.median(y_arr[:tail_n])) < C0:
+                    A0 = -abs(A0)
+                else:
+                    A0 = abs(A0)
+
+            # T2 guess: a fraction of the x-span
+            x_span = float(np.max(x_arr) - np.min(x_arr))
+            T20 = max(1.0, 0.3 * x_span)
+
+            popt, pcov = curve_fit(
+                self._t2_decay,
+                x_arr,
+                y_arr,
+                p0=(A0, T20, C0),
+                bounds=bounds,
+                maxfev=50000,
+            )
+            A_fit, T2_fit, C_fit = popt
+            perr = np.sqrt(np.diag(pcov)) if pcov is not None else np.array([np.nan, np.nan, np.nan])
+            T2_err = float(perr[1]) if perr.size >= 2 else float("nan")
+
+            x_fit = np.linspace(float(np.min(x_arr)), float(np.max(x_arr)), 500)
+            y_fit = self._t2_decay(x_fit, *popt)
+
+            # Display in µs (x is ns)
+            text = f"T2 = {T2_fit / 1000:.0f} ± {T2_err / 1000:.0f} µs"
+            return x_fit, y_fit, text
+        except Exception as e:
+            return np.array([]), np.array([]), f"Fit failed: {e}"

@@ -85,9 +85,9 @@ initialization_len_1 = 3500 * u.ns
 meas_len_1 = 500 * u.ns
 long_meas_len_1 = 4000 * u.ns
 
-initialization_len_2 = 3000 * u.ns
+initialization_len_2 = 3500 * u.ns
 meas_len_2 = 500 * u.ns
-long_meas_len_2 = 3000 * u.ns
+long_meas_len_2 = 4000 * u.ns
 
 # Relaxation time from the metastable state to the ground state after during initialization
 relaxation_time = 300 * u.ns
@@ -97,10 +97,11 @@ wait_for_initialization = 5 * relaxation_time
 mw_amp_NV = 0.2  # in units of volts
 mw_len_NV = 100 * u.ns
 
-x180_amp_NV = 0.1  # in units of volts
+x180_amp_NV = 0.25  # in units of volts
 x180_len_NV = 45 // 4 * 4  # in units of ns
 
-x90_amp_NV = x180_amp_NV / 2  # in units of volts
+x90_amp_NV = x180_amp_NV  # in units of volts
+#x90_amp_NV = 0.5
 x90_len_NV = x180_len_NV / 2 // 4 * 4 # in units of ns
 
 # RF parameters
@@ -122,10 +123,13 @@ laser_delay_2 = 0 * u.ns
 mw_delay = 0 * u.ns
 rf_delay = 0 * u.ns
 
+trigger_delay = 57  # 57ns with QOP222 and above otherwise 87ns
+trigger_buffer = 18  # 18ns with QOP222 and above otherwise 15ns
+
 #initialization_len_2 = 9000 * u.ns
 #long_meas_len_1 = 10000 * u.ns
 
-wait_between_runs = 1000 * u.ns
+wait_between_runs = 1500 * u.ns
 
 config = {
     "controllers": {
@@ -137,8 +141,9 @@ config = {
             "digital_outputs": {
                 1: {},  # AOM/Laser
                 2: {},  # AOM/Laser
-                3: {},  # SPCM1 - indicator
+                3: {},  # octave trigger
                 4: {},  # SPCM2 - indicator
+                5: {},  # SPCM1 - indicator
             },
             "analog_inputs": {
                 1: {"offset": 0, 'gain_db': 0},  # SPCM1
@@ -152,31 +157,31 @@ config = {
                     1: {
                         "LO_frequency": NV_LO_freq,
                         "LO_source": "internal",  # can be external or internal. internal is the default
-                        "output_mode": 'always_on',  # can be: "always_on" / "always_off"/ "triggered" / "triggered_reversed". "always_off" is the default
-                        "gain": 10,  # can be in the range [-20 : 0.5 : 20]dB
+                        "output_mode": 'triggered',  # can be: "always_on" / "always_off"/ "triggered" / "triggered_reversed". "always_off" is the default
+                        "gain": 20,  # can be in the range [-20 : 0.5 : 20]dB
                     },
                     2: {
                         "LO_frequency": NV_LO_freq,
                         "LO_source": "internal",
-                        "output_mode": "always_on",
+                        "output_mode": "always_off",
                         "gain": 0,
                     },
                     3: {
                         "LO_frequency": NV_LO_freq,
                         "LO_source": "internal",
-                        "output_mode": "always_on",
+                        "output_mode": "always_off",
                         "gain": 0,
                     },
                     4: {
                         "LO_frequency": NV_LO_freq,
                         "LO_source": "internal",
-                        "output_mode": "always_on",
+                        "output_mode": "always_off",
                         "gain": 0,
                     },
                     5: {
                         "LO_frequency": NV_LO_freq,
                         "LO_source": "internal",
-                        "output_mode": "always_on",
+                        "output_mode": "always_off",
                         "gain": 0,
                     },
                 },
@@ -206,9 +211,17 @@ config = {
                 "x180": "x180_pulse",
                 "x90": "x90_pulse",
                 "-x90": "-x90_pulse",
+                "x270": "x270_pulse",
                 "-y90": "-y90_pulse",
                 "y90": "y90_pulse",
                 "y180": "y180_pulse",
+            },
+            "digitalInputs": {
+                "marker": {
+                    "port": ("con1", 3),
+                    "delay": trigger_delay,
+                    "buffer": trigger_buffer,
+                },
             },
         },
         "AOM1": {
@@ -240,7 +253,7 @@ config = {
             "singleInput": {"port": ("con1", 1)},  # not used
             "digitalInputs": {  # for visualization in simulation
                 "marker": {
-                    "port": ("con1", 3),
+                    "port": ("con1", 5),
                     "delay": detection_delay_1,
                     "buffer": 0,
                 },
@@ -289,41 +302,55 @@ config = {
             "operation": "control",
             "length": mw_len_NV,
             "waveforms": {"I": "cw_wf", "Q": "zero_wf"},
+            "digital_marker": "ON",
         },
         "x180_pulse": {
             "operation": "control",
             "length": x180_len_NV,
             "waveforms": {"I": "x180_wf", "Q": "zero_wf"},
+            "digital_marker": "ON",
         },
         "x90_pulse": {
             "operation": "control",
             "length": x90_len_NV,
             "waveforms": {"I": "x90_wf", "Q": "zero_wf"},
+            "digital_marker": "ON",
         },
         "-x90_pulse": {
             "operation": "control",
             "length": x90_len_NV,
             "waveforms": {"I": "minus_x90_wf", "Q": "zero_wf"},
+            "digital_marker": "ON",
+        },
+        "x270_pulse": {
+            "operation": "control",
+            "length": x90_len_NV * 3,
+            "waveforms": {"I": "x270_wf", "Q": "zero_wf"},
+            "digital_marker": "ON",
         },
         "-y90_pulse": {
             "operation": "control",
             "length": x90_len_NV,
             "waveforms": {"I": "zero_wf", "Q": "minus_x90_wf"},
+            "digital_marker": "ON",
         },
         "y90_pulse": {
             "operation": "control",
             "length": x90_len_NV,
             "waveforms": {"I": "zero_wf", "Q": "x90_wf"},
+            "digital_marker": "ON",
         },
         "y180_pulse": {
             "operation": "control",
             "length": x180_len_NV,
             "waveforms": {"I": "zero_wf", "Q": "x180_wf"},
+            "digital_marker": "ON",
         },
         "const_pulse_single": {
             "operation": "control",
             "length": rf_length,  # in ns
             "waveforms": {"single": "rf_const_wf"},
+            "digital_marker": "ON",
         },
         "laser_ON_1": {
             "operation": "control",
@@ -371,6 +398,7 @@ config = {
         "x180_wf": {"type": "constant", "sample": x180_amp_NV},
         "x90_wf": {"type": "constant", "sample": x90_amp_NV},
         "minus_x90_wf": {"type": "constant", "sample": -x90_amp_NV},
+        "x270_wf": {"type": "constant", "sample": x90_amp_NV},
         "zero_wf": {"type": "constant", "sample": 0.0},
     },
     "digital_waveforms": {

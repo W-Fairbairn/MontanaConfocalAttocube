@@ -24,6 +24,7 @@ from pathlib import Path
 import time
 import numpy as np
 from scipy.optimize import curve_fit
+from scipy.signal import find_peaks
 from PyQt6 import QtCore, QtWidgets, QtGui, uic
 from PyQt6.QtCore import QSettings
 from PyQt6.QtGui import QColor, QAction
@@ -68,10 +69,11 @@ class SettingsDialogODMR(QDialog):
         # Main layout
         layout = QVBoxLayout()
 
-        layout.addWidget(QLabel("Freq min (ns):"))
+        layout.addWidget(QLabel("Freq min (MHz):"))
+        layout.addWidget(self.freq_min)
+        layout.addWidget(QLabel("Freq max (MHz):"))
         layout.addWidget(self.freq_max)
-        layout.addWidget(QLabel("Freq max (ns):"))
-        layout.addWidget(self.freq_max)
+        layout.addWidget(QLabel(""))
         layout.addWidget(QLabel("Number of points:"))
         layout.addWidget(self.num_points)
         layout.addWidget(QLabel("Number of averages:"))
@@ -92,6 +94,11 @@ class SettingsDialogODMR(QDialog):
         self.num_points = settings.value("num_points", 100)
         self.num_averages = settings.value("num_averages", 10000000)
         self.num_peaks = settings.value("num_peaks", 1)
+
+    @staticmethod
+    def load_value(key):
+        """Helper to load a single value from settings."""
+        return settings.value(key, None)
 
     def accept(self):
         """Override accept to save settings when OK button is clicked."""
@@ -119,10 +126,8 @@ class SettingsDialogODMR(QDialog):
 
 class CW_ODMR(ExperimentBase):
     def __init__(self):
-
-        self.qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name,
-                                          octave_calibration_db_path=calibration_db_dir)
-        self.qm = self.qmm.open_qm(config, close_other_machines=True)
+        self.qmm = None
+        self.qm = None
         self.job = None
         ##################
         #   Parameters   #
@@ -138,6 +143,7 @@ class CW_ODMR(ExperimentBase):
         self.counts, self.counts_ref, self.iteration, self.time_tags = None, None, None, None
         self.readout_len = long_meas_len_1
         self.original_rf_gain = None
+        self.cw_rf_gain_db = -15
         # Data to save
         self.save_data_dict = {
             "n_avg": self.n_avg,
@@ -158,7 +164,11 @@ class CW_ODMR(ExperimentBase):
         # Save original gain value to restore later
         self.original_rf_gain = config["octaves"][octave]["RF_outputs"][1]["gain"]
         # Set the gain for RF output 1 to -15 dB due to cw delivering high power compared to pulsed
-        config["octaves"][octave]["RF_outputs"][1]["gain"] = -20
+        config["octaves"][octave]["RF_outputs"][1]["gain"] = self.cw_rf_gain_db
+        config["octaves"][octave]["RF_outputs"][1]["output_mode"] = 'always_on'
+        self.qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name,
+                                          octave_calibration_db_path=calibration_db_dir)
+        self.qm = self.qmm.open_qm(config, close_other_machines=True)
         ###################
         # The QUA program #
         ###################
@@ -198,13 +208,13 @@ class CW_ODMR(ExperimentBase):
 
     def get_x(self):
         if self.f_vec is not None:
-            return (NV_LO_freq + self.f_vec) / u.GHz  # Convert to GHz
+            return (NV_LO_freq + self.f_vec)  # Convert to GHz
         else:
             return np.array([])
 
     def get_y(self):
         if self.counts is not None:
-            return self.counts / 1000 / (self.readout_len * 1e-9)
+            return self.counts / (self.readout_len * 1e-9)
         else:
             return np.zeros(len(self.f_vec))
 
@@ -230,9 +240,9 @@ class CW_ODMR(ExperimentBase):
     def get_plot_info(self):
         return {
             "x_text": "MW frequency",
-            "x_units": "GHz",
+            "x_units": "Hz",
             "y_text": "Counts",
-            "y_units": "kcps",
+            "y_units": "cps",
         }
 
     def fit(self):
@@ -252,7 +262,7 @@ class CW_ODMR(ExperimentBase):
             result = np.zeros_like(f, dtype=float)
 
             # Sum contributions from each Lorentzian dip
-            for i in range(self.num_peaks):
+            for i in range(len(params)//3):
                 f0 = params[3*i]        # Center frequency of peak i
                 A = params[3*i + 1]     # Amplitude of peak i
                 gamma = params[3*i + 2] # Linewidth of peak i
@@ -263,39 +273,110 @@ class CW_ODMR(ExperimentBase):
             return result
 
         try:
-            # Create initial guesses for the parameters
+            ############################################
+            # AI wrote this section but seems to work  #
+            ############################################
+            # Convert to arrays
+            x = np.asarray(x, dtype=float)
+            y = np.asarray(y, dtype=float)
+            self.num_peaks = int(SettingsDialogODMR.load_value("num_peaks"))
+            # --- Peak finding for ODMR dips ---
+            # ODMR shows dips in y. Work on an inverted, baseline-corrected, lightly smoothed trace.
+            y0 = y - np.median(y)
+
+            # Light smoothing to suppress point-to-point noise (moving average).
+            # Keep it small so we don't wash out narrow resonances.
+            win = max(3, (len(y0) // 200) | 1)  # odd window, ~0.5% of points
+            if win > 3:
+                kernel = np.ones(win, dtype=float) / win
+                y_s = np.convolve(y0, kernel, mode="same")
+            else:
+                y_s = y0
+
+            inv = -y_s
+
+            inv_range = float(np.nanmax(inv) - np.nanmin(inv)) if len(inv) else 0.0
+            if inv_range <= 0:
+                return None, None, "Flat data: no contrast"
+
+            # Use prominence instead of height. Height fails when baseline shifts, but prominence is robust.
+            prominence = 0.03 * inv_range  # start at 3% of contrast
+            # Minimum spacing between peaks (in points)
+            min_distance_pts = max(1, len(inv) // (max(1, self.num_peaks) * 10))
+
+            peak_idx, props = find_peaks(inv, prominence=prominence, distance=min_distance_pts)
+
+            # If too strict, relax once
+            if len(peak_idx) == 0:
+                prominence = 0.015 * inv_range
+                peak_idx, props = find_peaks(inv, prominence=prominence, distance=min_distance_pts)
+
+            if len(peak_idx) == 0:
+                return None, None, (
+                    f"No peaks found. Try lowering prominence. inv_range={inv_range:.3g}, "
+                    f"prominence={prominence:.3g}, min_distance_pts={min_distance_pts}"
+                )
+
+            # Sort by prominence and keep top N peaks
+            prominences = props.get("prominences", np.ones_like(peak_idx, dtype=float))
+            order = np.argsort(prominences)[::-1]
+            peak_idx = peak_idx[order][: self.num_peaks]
+
+            # --- Build initial guesses for fit ---
             p0 = []
-            y_min = np.min(y)
-            y_max = np.max(y)
-            amp_guess = (y_max - y_min) / 2
+            x_span = float(np.max(x) - np.min(x))
+            gamma_guess = x_span / 80 if x_span > 0 else 1.0  # heuristic
 
-            for i in range(self.num_peaks):
-                # Find approximate peaks by dividing the frequency range
-                idx = i * len(x) // self.num_peaks
-                f0_guess = x[idx]
-                A_guess = amp_guess
-                gamma_guess = (np.max(x) - np.min(x)) / (4 * self.num_peaks)
-
+            for idx in peak_idx:
+                f0_guess = float(x[idx])
+                # Dip amplitude guess (negative in y)
+                A_guess = float(y_s[idx])  # y_s is baseline-corrected; dip is negative
+                if A_guess > 0:
+                    A_guess = -abs(A_guess)
                 p0.extend([f0_guess, A_guess, gamma_guess])
 
             # Perform the fit
-            popt, _ = curve_fit(multi_lorentzian, x, y, p0=p0, maxfev=5000)
+            popt, _ = curve_fit(multi_lorentzian, x, y0, p0=p0, maxfev=10000)
 
-            # Generate high-resolution fit curve for plotting
+            # Generate high-resolution fit curve for plotting (re-add median)
             x_fit = np.linspace(np.min(x), np.max(x), 1000)
-            y_fit = multi_lorentzian(x_fit, *popt)
+            y_fit = multi_lorentzian(x_fit, *popt) + np.median(y)
 
             # Build results text
-            text = "ODMR Fit Results:\n"
-            text += f"Number of peaks: {self.num_peaks}\n\n"
+            # Each peak -> a small block of 4 lines. We'll lay as many blocks side-by-side as will fit.
+            blocks = []
             for i in range(self.num_peaks):
-                f0 = popt[3*i]
-                A = popt[3*i + 1]
-                gamma = popt[3*i + 2]
-                text += f"Peak {i+1}:\n"
-                text += f"  f0 = {f0:.4f} GHz\n"
-                text += f"  Amplitude = {A:.4e}\n"
-                text += f"  Linewidth (γ) = {gamma:.4f} GHz\n\n"
+                f0 = popt[3 * i]
+                A = popt[3 * i + 1]
+                gamma = popt[3 * i + 2]
+                blocks.append(
+                    [
+                        f"Peak {i+1}",
+                        f"Centre: {(f0-NV_LO_freq)/1E6:.2f} MHz",
+                        f"Contrast:  {(1-((np.max(y)+A)/np.max(y)))*100:.1f} %",
+                        f"Width:  {gamma/1E6:.2f} MHz",
+                    ]
+                )
+
+            # Column layout: choose how many columns based on an assumed character width.
+            # This is GUI-independent (we don't have direct access to widget width here),
+            # but monospace font in QM_GUI.py makes this approximation reasonable.
+            col_w = 26  # chars per peak block column
+            assumed_chars_per_line = 100
+            cols = 8
+
+            rows = []
+            for start in range(0, len(blocks), cols):
+                row_blocks = blocks[start : start + cols]
+                max_h = max(len(b) for b in row_blocks)
+                padded = [b + [""] * (max_h - len(b)) for b in row_blocks]
+                for line_i in range(max_h):
+                    rows.append("".join(padded[j][line_i].ljust(col_w) for j in range(len(padded))).rstrip())
+                rows.append("")
+
+            text = "ODMR Fit Results\n"
+            text += f"Peaks fit: {self.num_peaks}    smoothing win: {win}    prominence: {prominence:.3g}\n\n"
+            text += "\n".join(rows).rstrip() + "\n"
 
             return x_fit, y_fit, text
 
@@ -304,8 +385,14 @@ class CW_ODMR(ExperimentBase):
 
     def restore_config(self):
         """Restore the original RF output gain from before compilation"""
+        config["octaves"][octave]["RF_outputs"][1]["output_mode"] = 'triggered'
         if hasattr(self, 'original_rf_gain'):
             config["octaves"][octave]["RF_outputs"][1]["gain"] = self.original_rf_gain
+            # Also restore on the actual Octave hardware.
+            try:
+                self.qm.octave.set_rf_output_gain("NV", self.original_rf_gain)
+            except Exception as e:
+                print(f"Warning: failed to restore Octave RF output gain for NV to {self.original_rf_gain} dB: {e}")
 
     def start_program(self):
         # Always recompile to apply any setting changes
@@ -339,4 +426,3 @@ class CW_ODMR(ExperimentBase):
             finally:
                 # Always restore the original config, even if an error occurs
                 self.restore_config()
-

@@ -34,11 +34,23 @@ laser_duration = 4000 * u.ns  # Laser pulse duration - adjust this value to chan
 
 long_meas_len_1 = 5000  # in clock cycles, should be long enough to capture all counts, can be adjusted based on expected count rates
 meas_len = long_meas_len_1
-n_avg = 100_000_000
-time_arr_len = 1000
+n_avg = 5_000_000
+time_arr_len = 100
 
 # Update only the laser_ON_2 pulse in the config
 config["pulses"]["laser_ON_2"]["length"] = laser_duration
+
+rabi_frequency = 10 * u.MHz
+ODMR_peak_freq = -89 * u.MHz
+pi_pulse_len = (1 / (2 * rabi_frequency)) / 1e-9  # ns
+config["octaves"][octave]["RF_outputs"][1]["gain"] = -5
+print("pi", pi_pulse_len, "ns")
+print("pi/2", pi_pulse_len / 2, "ns")
+config["pulses"]["x180_pulse"]["length"] = (pi_pulse_len) // 4 * 4
+config["pulses"]["x90_pulse"]["length"] = (pi_pulse_len / 2) // 4 * 4
+config["pulses"]["-x90_pulse"]["length"] = (pi_pulse_len / 2) // 4 * 4
+config["pulses"]["x270_pulse"]["length"] = (pi_pulse_len * 1.5) // 4 * 4
+
 
 ###################
 # The QUA program #
@@ -53,25 +65,39 @@ with program() as counter:
     n = declare(int)  # number of iterations
     i = declare(int)  # variable to sweep over time tags
     counts_st = declare_stream()  # stream for counts
+    counts2_st = declare_stream()  # stream for counts
+    times2_st = declare_stream()  # stream to save time tags of counts, ref
+
+
 
     # Infinite loop to allow the user to work on the experimental set-up while looking at the counts
+    update_frequency("NV", ODMR_peak_freq, keep_phase=True)
     with for_(n, 0, n < n_avg, n + 1):
-        # Play the laser pulse...
-        update_frequency("NV", 100 * u.MHz)
+        align()
+        wait(100000)
         align()
         play("laser_ON", "AOM2")
-        measure("long_readout", "SPCM1", time_tagging.analog(times, meas_len, counts))
-
-        wait(2500//4, "NV")
-        play("x180" * amp(1), "NV", duration=1000//4)
-        align()  # Play the laser pulse after the mw pulse
+        measure("readout", "SPCM1", time_tagging.analog(times, meas_len, counts))
         save(counts, counts_st)
         with for_(i, 0, i < counts, i + 1):
-            save(times[i], times_st)  # cant directly save QUA vector, loop and save each element separately
+            save(times[i], times_st)  # save each timetag (relative to start of measure)
+
+        wait(wait_between_runs * u.ns, "AOM2")  # wait in between iterations
+
+        align()
+        play("laser_ON", "AOM2")
+        measure("readout", "SPCM1", time_tagging.analog(times, meas_len, counts))
+        save(counts, counts2_st)
+        with for_(i, 0, i < counts, i + 1):
+            save(times[i], times2_st)  # save each timetag (relative to start of measure)
+
+        wait(wait_between_runs * u.ns, "AOM2")  # wait in between iterations
 
     with stream_processing():
-        counts_st.with_timestamps().save("counts")
-        times_st.buffer(time_arr_len).save("time_tags")  # save time tags buffer size should be larger than counts expected
+        counts_st.with_timestamps().save_all("counts")
+        times_st.save_all("time_tags")
+        counts2_st.with_timestamps().save_all("counts2")
+        times2_st.save_all("time_tags2")
 
 #####################################
 #  Open Communication with the QOP  #
@@ -108,20 +134,34 @@ else:
     job = qm.execute(counter)
     # Get results from QUA program
     results = fetching_tool(
-        job, data_list=["counts", "time_tags"], mode="live"
+        job, data_list=["counts", "time_tags", "counts2", "time_tags2"], mode="live"
     )
 
     fig, ax = plt.subplots()
     interrupt_on_close(fig, job)  # Interrupts the job when closing the figure
     time_tag_arr = np.zeros(meas_len)
+    time_tag_arr2 = np.zeros(meas_len)
 
     while results.is_processing():
-        counts, time_tags = results.fetch_all()
+        counts, time_tags, counts2, time_tags2 = results.fetch_all()
         ax.cla()
-        for i in time_tags:
-            time_tag_arr[i] += 1  # Convert histogram of time tags to array for faster plotting, saving memory
-        time_tags = []
-        ax.plot(np.linspace(0, meas_len, meas_len), time_tag_arr[:])
-        ax.set_xlabel("Time bins")
+
+        rel_bins = np.asarray(time_tags, dtype=int)
+        rel_bins = rel_bins[(rel_bins >= 0) & (rel_bins < meas_len)]
+        rel_bins2 = np.asarray(time_tags2, dtype=int)
+        rel_bins2 = rel_bins2[(rel_bins2 >= 0) & (rel_bins2 < meas_len)]
+
+        for b in rel_bins:
+            time_tag_arr[b] += 1
+        for b in rel_bins2:
+            time_tag_arr2[b] += 1
+
+        ax.plot(np.arange(meas_len), time_tag_arr, label="Counts with wait")
+        ax.plot(np.arange(meas_len), time_tag_arr2, color="orange", label="Counts no wait")
+        ax.set_xlabel("Time since readout start [4 ns bins]")
         ax.set_ylabel("Counts")
-        plt.pause(0.1)
+        ax.legend()
+
+        time_tag_arr[:] = 0
+        time_tag_arr2[:] = 0
+        plt.pause(1)

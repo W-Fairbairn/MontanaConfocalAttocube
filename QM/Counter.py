@@ -68,9 +68,8 @@ class SettingsDialogRabi(QDialog):
 class Counter(ExperimentBase):
     def __init__(self):
 
-        self.qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name,
-                                          octave_calibration_db_path=calibration_db_dir)
-        self.qm = self.qmm.open_qm(config, close_other_machines=True)
+        self.qmm =None
+        self.qm = None
         self.is_running = False
         self.counter = None
         self.job = None
@@ -87,6 +86,9 @@ class Counter(ExperimentBase):
             return 0
 
     def compile_program(self):
+        self.qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name,
+                                          octave_calibration_db_path=calibration_db_dir)
+        self.qm = self.qmm.open_qm(config, close_other_machines=True)
         ##################
         #   Parameters   #
         ##################
@@ -131,6 +133,7 @@ class Counter(ExperimentBase):
         """Return counts data in kcps"""
         return np.array(self.counts_data) if len(self.counts_data) > 0 else np.array([])
 
+
     def stop_program(self):
         self.is_running = False
         try:
@@ -149,17 +152,17 @@ class Counter(ExperimentBase):
             avg_counts = np.mean(self.counts_data[-20:]) if len(self.counts_data) >= 20 else np.mean(self.counts_data)
 
             # Format the average with appropriate units
-            if avg_counts >= 1000:
+            if avg_counts >= 1000000:
                 unit = "Mcps"
-                display_avg = avg_counts / 1000
-            elif avg_counts < 1:
-                unit = "cps"
-                display_avg = avg_counts * 1000
-            else:
+                display_avg = avg_counts / 1000000
+            elif avg_counts >= 1000:
                 unit = "kcps"
+                display_avg = avg_counts / 1000
+            else:
+                unit = "cps"
                 display_avg = avg_counts
 
-            fit_text = f"Rolling Average (10-point window)\nAverage Counts: {display_avg:.2f} {unit}"
+            fit_text = f"Average Counts: {display_avg:.2f} {unit}"
 
             return np.array(self.time_data), np.array(self.rolling_avg_data), fit_text
         else:
@@ -170,7 +173,7 @@ class Counter(ExperimentBase):
             "x_text": "Time",
             "x_units": "s",
             "y_text": "Counts",
-            "y_units": "kcps",
+            "y_units": "cps",
         }
 
     def start_program(self):
@@ -211,7 +214,7 @@ class Counter(ExperimentBase):
                 last_idx = new_idx
 
                 self.time_data.extend(new_counts["timestamp"] / 1E9)  # Convert timestamps to seconds
-                self.counts_data.extend(new_counts["value"] / (meas_len_1*1E-9*3000) / 1000) # Convert counts to kcps
+                self.counts_data.extend(new_counts["value"] / (meas_len_1*1E-9*3000)) # Convert counts to kcps
 
                 # Limit data points displayed
                 if len(self.time_data) > points:

@@ -52,6 +52,7 @@ class SettingsDialogRabi(QDialog):
         self.num_points = QLineEdit(str(self.num_points), parent=self)
         self.num_averages = QLineEdit(str(self.num_averages), parent=self)
         self.resonant_Frequency = QLineEdit(str(self.resonant_Frequency), parent=self)
+        self.gain = QLineEdit(str(self.gain), parent=self)
 
         buttons = (
             QDialogButtonBox.StandardButton.Ok
@@ -75,6 +76,8 @@ class SettingsDialogRabi(QDialog):
 
         layout.addWidget(QLabel("Resonant Frequency (MHz):"))
         layout.addWidget(self.resonant_Frequency)
+        layout.addWidget(QLabel("Gain:"))
+        layout.addWidget(self.gain)
 
         layout.addWidget(button_box)
         self.setLayout(layout)
@@ -85,6 +88,7 @@ class SettingsDialogRabi(QDialog):
         self.time_max = settings.value("time_max", 500)
         self.num_points = settings.value("num_points", 50)
         self.num_averages = settings.value("num_averages", 10000000)
+        self.gain = settings.value("gain", 15)
 
     def accept(self):
         """Override accept to save settings when OK button is clicked."""
@@ -92,6 +96,7 @@ class SettingsDialogRabi(QDialog):
         settings.setValue("time_max", self.time_max.text())
         settings.setValue("num_points", self.num_points.text())
         settings.setValue("num_averages", self.num_averages.text())
+        settings.setValue("gain", self.gain.text())
         super().accept()
 
     @staticmethod
@@ -102,18 +107,19 @@ class SettingsDialogRabi(QDialog):
             time_max = int(settings.value("time_max", 500))
             num_points = int(settings.value("num_points", 50))
             n_avg = int(settings.value("num_averages", 10000000))
-            return freq, time_max, num_points, n_avg
+            gain = int(settings.value("gain", 15))
+            return freq, time_max, num_points, n_avg, gain
         except (ValueError, TypeError):
             print("Invalid Inputs, using default values.")
-            return 0.0, 500, 50, 10000000
+            return 0.0, 500, 50, 10000000, 15
 
 
 class Rabi(ExperimentBase):
     def __init__(self):
 
-        self.qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name,
-                                          octave_calibration_db_path=calibration_db_dir)
-        self.qm = self.qmm.open_qm(config, close_other_machines=True)
+        self.qmm = None
+        self.qm = None
+        self.job = None
 
         ##################
         #   Parameters   #
@@ -124,6 +130,9 @@ class Rabi(ExperimentBase):
         self.t_vec = None
         self.n_avg = None
         self.time_rabi = None
+        self.gain = None
+        self.original_rf_gain = None
+        self.original_output_mode = None
         self.counts, self.counts_ref, self.iteration, self.time_tags = None, None, None, None
 
         # Data to save
@@ -133,12 +142,48 @@ class Rabi(ExperimentBase):
             "config": config,
         }
 
+    def restore_config(self):
+        """Restore the original RF output settings from before compilation."""
+        # Restore in-memory config first
+        if self.original_output_mode is not None:
+            config["octaves"][octave]["RF_outputs"][1]["output_mode"] = self.original_output_mode
+        if self.original_rf_gain is not None:
+            config["octaves"][octave]["RF_outputs"][1]["gain"] = self.original_rf_gain
+
+        # Best-effort: restore on actual Octave hardware too (if QM is available)
+        if self.original_rf_gain is not None and self.qm is not None:
+            try:
+                self.qm.octave.set_rf_output_gain("NV", self.original_rf_gain)
+            except Exception as e:
+                print(
+                    f"Warning: failed to restore Octave RF output gain for NV to {self.original_rf_gain} dB: {e}"
+                )
+
     def compile_program(self):
+        freq, self.length_run, self.num_points, self.n_avg, self.gain = SettingsDialogRabi.get_settings()
+
+        # Save original values to restore later so other experiments aren't affected.
+        self.original_rf_gain = config["octaves"][octave]["RF_outputs"][1].get("gain")
+        self.original_output_mode = config["octaves"][octave]["RF_outputs"][1].get("output_mode")
+
+        # Apply requested gain for this experiment
+        config["octaves"][octave]["RF_outputs"][1]["gain"] = self.gain
+        self.qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name,
+                                          octave_calibration_db_path=calibration_db_dir)
+        self.qm = self.qmm.open_qm(config, close_other_machines=True)
+
+        # Apply gain on the Octave hardware as well (best-effort)
+        try:
+            self.qm.octave.set_rf_output_gain("NV", self.gain)
+        except Exception as e:
+            print(f"Warning: failed to set Octave RF output gain for NV to {self.gain} dB: {e}")
+
         # Clear data arrays from previous runs
         self.counts, self.counts_ref, self.iteration, self.time_tags = None, None, None, None
 
-        freq, self.length_run, self.num_points, self.n_avg = SettingsDialogRabi.get_settings()
+
         self.t_vec = np.arange(4, self.length_run // 4, max(1, self.length_run // (4 * self.num_points)))
+        freq = freq * u.MHz  # Hz
         ###################
         # The QUA program #
         ###################
@@ -146,12 +191,12 @@ class Rabi(ExperimentBase):
             counts = declare(int)  # variable for number of counts
             counts_ref = declare(int)  # variable for number of counts in reference window
             counts_st = declare_stream()  # stream for counts
-            counts_ref_st = declare_stream()  # stream for counts
+            counts_ref_st = declare_stream()  # stream for reference counts
             times = declare(int, size=1000)  # QUA vector for storing the time-tags
-            times_ref = declare(int, size=1000)  # QUA vector for storing the time-tags
             t = declare(int)  # variable to sweep over in time
             i = declare(int)  # variable to sweep over
             n = declare(int)  # variable to for_loop
+
             n_st = declare_stream()  # stream to save iterations
             times_st = declare_stream()
 
@@ -163,14 +208,19 @@ class Rabi(ExperimentBase):
             # Time Rabi sweep
             with for_(n, 0, n < self.n_avg, n + 1):
                 with for_(*from_array(t, self.t_vec)):
-                    update_frequency("NV", freq * u.MHz)
-                    play("x180" * amp(1), "NV", duration=t)
+                    update_frequency("NV", freq)
+                    align()
+                    play("cw" * amp(1), "NV", duration=t)
                     align()  # Play the laser pulse after the mw pulse
                     play("laser_ON", "AOM2")
+
+                    # Signal window
                     measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
                     save(counts, counts_st)  # save counts
                     with for_(i, 0, i < counts, i + 1):
                         save(times[i], times_st)  # cant directly save QUA vector, loop and save each element separately
+
+                    # Reference window
                     measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
                     save(counts, counts_ref_st)
                     wait(wait_between_runs * u.ns)
@@ -178,7 +228,6 @@ class Rabi(ExperimentBase):
                 save(n, n_st)  # save number of iteration inside for_loop
 
             with stream_processing():
-                # Cast the data into a 1D vector, average the 1D vectors together and store the results on the OPX
                 counts_st.buffer(len(self.t_vec)).average().save("counts")
                 counts_ref_st.buffer(len(self.t_vec)).average().save("counts_ref")
                 times_st.buffer(1000).save("time_tags")
@@ -205,9 +254,13 @@ class Rabi(ExperimentBase):
     def stop_program(self):
         self.is_running = False
         try:
-            self.job.halt()
+            if self.job is not None:
+                self.job.halt()
         except Exception as e:
             print(f"Error halting the job: {e}")
+        finally:
+            # Ensure config/hardware are restored when stopping
+            self.restore_config()
 
     def save_data(self):
         # Save results
@@ -237,9 +290,27 @@ class Rabi(ExperimentBase):
         err = self.get_err()
         A_guess = (np.max(y) - np.min(y)) / 2
         C_guess = np.mean(y)
-        f_guess = 7E6  # Initial frequency guess in MHz
-        T2_guess = 0.5E-6  # Decay time guess
-        phi_guess = np.pi / 2  # Phase guess
+
+        # t = time array, y = data
+        dt = (x[1] - x[0])*1E-9  # sampling interval
+        fs = 1 / dt  # sampling frequency
+
+        Y = np.fft.fft(y)
+        freqs = np.fft.fftfreq(len(y), dt)
+
+        # Take only positive frequencies
+        mask = freqs > 0
+        freqs = freqs[mask]
+        power = np.abs(Y[mask])
+
+        # Dominant frequency
+        print(freqs)
+        f_guess = freqs[np.argmax(power)]
+        print(f_guess)
+
+        #f_guess = 7E6  # Initial frequency guess in Hz
+        T2_guess = 0.1E-6  # Decay time guess
+        phi_guess = 0  # Phase guess
 
         p0 = [A_guess, f_guess, T2_guess, phi_guess, C_guess]
         popt, pcov = curve_fit(self.fit_func, x, y, p0=p0, sigma=err, absolute_sigma=True, maxfev=5000)
@@ -284,7 +355,9 @@ class Rabi(ExperimentBase):
             print(f"Error in start_rabi: {e}")
             import traceback
             traceback.print_exc()
-
+        finally:
+            # Always restore original config/hardware settings
+            self.restore_config()
 
 '''
 #####################################

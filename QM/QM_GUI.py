@@ -33,6 +33,9 @@ from CW_ODMR_GUI import CW_ODMR
 from CW_ODMR_GUI import SettingsDialogODMR
 from Counter import Counter
 from Counter import SettingsDialogRabi as SettingsDialogCounter
+from T1 import T1
+from T1 import SettingsDialogT1
+from Hahn_Echo import HahnEcho, SettingsDialogHahnEcho
 from experiment_base import ExperimentBase
 from styles import Colors, MAIN_WINDOW_STYLESHEET, PLOT_WIDGET_BG, get_textbox_palette, get_toolbar_palette
 from experiment_base import ExperimentBase
@@ -77,6 +80,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setWindowTitle('CW Optically Detected Magnetic Resonance (ODMR)')
         elif self.experiment == "Counter":
             self.setWindowTitle('Photon Counter')
+        elif self.experiment == "T1":
+            self.setWindowTitle('T1 Measurement')
+        elif self.experiment == "HahnEcho":
+            self.setWindowTitle('Hahn Echo (T2) Measurement')
         else:
             self.setWindowTitle('Quantum Measurement')
 
@@ -92,7 +99,14 @@ class MainGui(QtCore.QObject):
         self.running: bool = False
         self.program: ExperimentBase | None = None
         self.settings_dialog = None
-        self.experiments = ["Counter", "Rabi", "ODMR"]
+        self.experiments = ["Counter", "Rabi", "ODMR", "T1", "HahnEcho"]
+        self.classes = {
+            "Counter": (Counter, SettingsDialogCounter),
+            "Rabi": (Rabi, SettingsDialogRabi),
+            "ODMR": (CW_ODMR, SettingsDialogODMR),
+            "T1": (T1, SettingsDialogT1),
+            "HahnEcho": (HahnEcho, SettingsDialogHahnEcho),
+        }
         # Load the last selected experiment from persistent storage, default to "Rabi"
         self.current_experiment: str = settings.value("current_experiment", "Counter")
 
@@ -147,6 +161,12 @@ class MainGui(QtCore.QObject):
         # Style the textbox to match the plot widget color scheme
         self._mw.fit_results_Text.setPalette(get_textbox_palette())
 
+        # Use a monospace font so multi-column fit text aligns nicely across all modules.
+        mono = QtGui.QFont("Consolas")
+        mono.setStyleHint(QtGui.QFont.StyleHint.Monospace)
+        mono.setPointSize(10)
+        self._mw.fit_results_Text.setFont(mono)
+
         # Style the toolbar to match the plot widget color scheme
         self._mw.counting_control_ToolBar.setPalette(get_toolbar_palette())
 
@@ -165,16 +185,9 @@ class MainGui(QtCore.QObject):
 
     def init_program(self):
         """Initialize the appropriate program based on current experiment"""
-        match self.current_experiment:
-            case "Rabi":
-                self.program = Rabi()
-                self.settings_dialog = SettingsDialogRabi(self._mw)
-            case "ODMR":
-                self.program = CW_ODMR()
-                self.settings_dialog = SettingsDialogODMR(self._mw)
-            case "Counter":
-                self.program = Counter()
-                self.settings_dialog = SettingsDialogCounter(self._mw)
+        program_class, settings_dialog_class = self.classes.get(self.current_experiment, (Counter, SettingsDialogCounter))
+        self.program = program_class()  # Instantiate the program class
+        self.settings_dialog = settings_dialog_class(self._mw)  # Instantiate the settings dialog
         self.update_plot_labels()
 
     def on_experiment_changed(self, experiment_name):
@@ -218,7 +231,6 @@ class MainGui(QtCore.QObject):
             self._mw.rabi_plot_PlotWidget.setLabel(axis='left', text="y data", units="")
             self._mw.rabi_plot_PlotWidget.setLabel(axis='bottom', text="x data", units="")
 
-
     def save_graph_data(self):
         """Save current graph data for the active experiment"""
         try:
@@ -256,6 +268,8 @@ class MainGui(QtCore.QObject):
             self.fit_image.setData(np.array([]), np.array([]))
 
         self._mw.fit_results_Text.setPlainText(fit_text)
+        doc_height = self._mw.fit_results_Text.document().size().height() + 10  # Add some padding
+        self._mw.fit_results_Text.setFixedHeight(int(doc_height))
 
     def save_experiment_selection(self):
         """Save the currently selected experiment to QSettings"""
@@ -270,6 +284,8 @@ class MainGui(QtCore.QObject):
             # Clear the fit from the previous run
             self.fit_image.setData(np.array([]), np.array([]))
             self._mw.fit_results_Text.setPlainText("")
+            doc_height = self._mw.fit_results_Text.document().size().height() + 10  # Add some padding
+            self._mw.fit_results_Text.setFixedHeight(int(doc_height))
 
             # Start the measurement in a separate thread
             self.running = True
@@ -298,6 +314,8 @@ class MainGui(QtCore.QObject):
             if x is not None and y is not None:
                 self.fit_image.setData(x, y)
                 self._mw.fit_results_Text.setPlainText(text)
+                doc_height = self._mw.fit_results_Text.document().size().height() + 10  # Add some padding
+                self._mw.fit_results_Text.setFixedHeight(int(doc_height))
 
     def save_clicked(self):
         self.program.save_data()
@@ -335,6 +353,8 @@ class MainGui(QtCore.QObject):
                             self.fit_image.setData(x_fit, y_fit)
                             # Update the fit results text with average counts
                             self._mw.fit_results_Text.setPlainText(fit_text)
+                            doc_height = self._mw.fit_results_Text.document().size().height() + 10  # Add some padding
+                            self._mw.fit_results_Text.setFixedHeight(int(doc_height))
 
                     # Continuously save data during measurement
                     self.save_graph_data()
@@ -360,7 +380,6 @@ class MainGui(QtCore.QObject):
 
 if __name__ == "__main__":
     import sys
-
     app = QtWidgets.QApplication(sys.argv)
     main_gui = MainGui()
     main_gui.show()

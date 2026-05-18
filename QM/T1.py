@@ -29,241 +29,289 @@ import threading
 from multiprocessing.connection import Listener
 import sys
 import signal
-
-
-##################
-#   Parameters   #
-##################
-run_length = 5 * (1E6 // 4)  # converted to clock cycles (4ns), change first value (in ms)
-num_points = 15  # number of points to sample for T1 curve
-n_avg = 1_000_000  # The number averaging iterations
-
-# Vector of delay times, starts at 500 clock cycles to reduce error on first point
-t_vec = np.arange(500, run_length, np.floor(run_length/num_points))
-
-# maximum number of counts to store time tags for, (should be larger than expected counts in meas_len_1 window)
-time_arr_len = 1000
-
-# variable to set the delay for the reference readout
-ref_offset = (initialization_len_1 - 2 * meas_len_1 - 25) // 4
-
-# Data to save
-save_data_dict = {
-    "n_avg": n_avg,
-    "t_vec": t_vec,
-    "config": config,
-}
-
-###################
-# The QUA program #
-###################
-with program() as T1:
-    counts = declare(int)  # saves number of photon counts
-    counts_ref = declare(int)  # saves number of photon counts in reference readout
-    times = declare(int, size=time_arr_len)  # QUA vector for storing the time-tags
-    times_ref = declare(int, size=time_arr_len)  # QUA vector for storing the time-tags of reference counts
-    times_st = declare_stream()  # stream to save time tags of counts, ref
-    counts_st = declare_stream()  # stream for counts
-    counts_ref_st = declare_stream()  # stream for reference counts
-    n_st = declare_stream()  # stream to save iterations
-
-    t = declare(int)  # variable to sweep over delay
-    n = declare(int)  # variable to sweep over iterations
-    i = declare(int)  # variable to sweep over time tags
-
-    # Spin initialization
-    # play("laser_ON", "AOM2")
-    # wait(wait_for_initialization * u.ns, "AOM2")
-
-    # T1 sequence
-    # noinspection PyTypeChecker
-    with for_(n, 0, n < n_avg, n + 1):
-        with for_(*from_array(t, t_vec)):
-            play("laser_ON", "AOM2")  # laser on for initialization seems to work better if this is done every loop
-            wait(wait_for_initialization * u.ns, "AOM2")
-            align()
-            wait(t)                                      # wait the variable delay (in clock cycles)
-            align()
-            wait(AOM_delay, "SPCM1")            # wait for the AOM to turn on before starting the measurement
-            wait(Measurement_delay, "SPCM1")    # choose what part of the pulse extraction is sampled for the T1
-            play("laser_ON", "AOM2")        # laser on for readout
-            play("laser_ON", "AOM1")        # send signal to timetagger for debugging
-
-            # saves total counts over meas_len_1 window in counts variable. times array populated with timestamps of
-            # each count event with respect to the start of the measurement, in clock cycles (4ns)
-            measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
-            save(counts, counts_st)
-
-            wait(ref_offset, "SPCM1")
-            measure("readout", "SPCM1", time_tagging.analog(times_ref, meas_len_1, counts_ref))
-            save(counts_ref, counts_ref_st)  # save ref counts
-
-            # noinspection PyTypeChecker
-            with for_(i, 0, i < counts, i + 1):
-                save(times[i], times_st)  # cant directly save QUA vector, loop and save each element separately
-
-        with while_(IO1):  # refocusing loop
-            play("laser_ON", "AOM2")  # laser on for optimise
-            wait(wait_for_initialization * u.ns, "AOM2")
-            align()
-
-        save(n, n_st)  # save number of iteration inside for_loop
-
-    with stream_processing():
-        counts_st.buffer(len(t_vec)).average().save("counts")  # save average counts for each point in an array
-        counts_ref_st.buffer(len(t_vec)).average().save("counts_ref")
-        times_st.buffer(time_arr_len).save("time_tags")  # save time tags buffer size should be larger than counts expected
-        n_st.save("iteration")
-
-        # save_all creates large buffer of data on OPX
-        # if iterations and point count are too large may exceed memory limit (100E6 int)
-        counts_st.buffer(len(t_vec)).save_all("raw_counts")
-        counts_ref_st.buffer(len(t_vec)).save_all("raw_counts_ref")
-
-
-def receive_signal():
-    print("Thread: Sleeping until signal received...")
-    address = ("localhost", 6000)
-    listener = Listener(address, authkey=b"secret password")
-    conn = listener.accept()
-    print("connection accepted from", listener.last_accepted)
-    while True:
-        try:
-            msg = conn.recv()
-            print(msg)
-            if msg == "start":
-                qm.set_io1_value(True)
-                print("Paused")
-            elif msg == "stop":
-                qm.set_io1_value(False)
-                print("Resumed")
-            elif msg == "close":
-                conn.close()
-                break
-        except Exception as ex:
-            print(f"Error: {ex}")
-            break
-
-    listener.close()
-
-
-#####################################
-#  Open Communication with the QOP  #
-#####################################
-
-calibration_db_dir = Path(__file__).resolve().parent
-qmm = QuantumMachinesManager(
-    host=qop_ip,
-    cluster_name=cluster_name,
-    octave_calibration_db_path=calibration_db_dir,
+import time
+from scipy.optimize import curve_fit
+from PyQt6 import QtCore, QtWidgets, QtGui, uic
+from PyQt6.QtCore import QSettings
+from PyQt6.QtGui import QColor, QAction
+from PyQt6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QDialogButtonBox,
+    QGroupBox,
+    QRadioButton,
+    QVBoxLayout,
+    QLabel,
+    QLineEdit,
 )
+from experiment_base import ExperimentBase
 
-#######################
-# Simulate or execute #
-#######################
-simulate = False
-
-if simulate:
-    # For debugging the waveform, it's often convenient to simulate a single iteration:
-    #   n_avg = 1
-    #   t_vec = np.array([some_short_delay_in_clock_cycles])
-    # and reduce the duration accordingly.
-    simulation_config = SimulationConfig(duration=3_000)  # In clock cycles = 4ns
-    # Simulate blocks python until the simulation is done
-    job = qmm.simulate(config, T1, simulation_config)
-    # Get the simulated samples
-    samples = job.get_simulated_samples()
-    # Plot the simulated samples (this will show all pulses/traces produced by the program)
-    samples.con1.plot()
-    # Get the waveform report object
-    waveform_report = job.get_simulated_waveform_report()
-    # Cast the waveform report to a python dictionary
-    waveform_dict = waveform_report.to_dict()
-    # Visualize and save the waveform report
-    waveform_report.create_plot(samples, plot=True, save_path=str(Path(__file__).resolve()))
-else:
-    # Open quantum machine and execute program
-    qm = qmm.open_qm(config, close_other_machines=True)
-    qm.set_io1_value(False)  # Ensure IO1 is low at the start of the program (not paused)
-    job = qm.execute(T1)  # start the job
-
-    results = fetching_tool(
-        job, data_list=["counts", "counts_ref", "time_tags", "iteration"], mode="live"
-    )
-    t2 = threading.Thread(target=receive_signal, daemon=True)  # Thread to receive pause/resume signals from external script, set as daemon to ensure it closes when main thread closes
-    t2.start()
+settings = QSettings("Diamond", "QM_T1")
 
 
+class SettingsDialogT1(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.load_settings()
+        self.setWindowTitle("Settings")
 
-    # Live plotting
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2)  # , sharex=True
-    interrupt_on_close(fig, job)  # Interrupts the job when closing the figure
-    time_tag_arr = np.zeros(meas_len_1)
-    iteration = 0
+        self.time_max = QLineEdit(str(self.time_max), parent=self)
+        self.num_points = QLineEdit(str(self.num_points), parent=self)
+        self.num_averages = QLineEdit(str(self.num_averages), parent=self)
 
-    while results.is_processing():
-        # Fetch results
+        buttons = (
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+
+        button_box = QDialogButtonBox(buttons)
+        button_box.accepted.connect(self.accept)  # type: ignore
+        button_box.rejected.connect(self.reject)  # type: ignore
+
+        # Main layout
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel("Time max (ns):"))
+        layout.addWidget(self.time_max)
+        layout.addWidget(QLabel("Number of points:"))
+        layout.addWidget(self.num_points)
+        layout.addWidget(QLabel("Number of averages:"))
+        layout.addWidget(self.num_averages)
+
+        layout.addWidget(button_box)
+        self.setLayout(layout)
+
+    def load_settings(self):
+        """Load saved settings and update widgets."""
+        self.time_max = settings.value("time_max", 500)
+        self.num_points = settings.value("num_points", 50)
+        self.num_averages = settings.value("num_averages", 10000000)
+
+    def accept(self):
+        """Override accept to save settings when OK button is clicked."""
+        settings.setValue("time_max", self.time_max.text())
+        settings.setValue("num_points", self.num_points.text())
+        settings.setValue("num_averages", self.num_averages.text())
+        super().accept()
+
+    @staticmethod
+    def get_settings():
+        """Retrieve settings from QSettings. Returns tuple of (freq, time_max, num_points, n_avg)"""
         try:
-            counts, counts_ref, time_tags, iteration = results.fetch_all()
+            time_max = int(settings.value("time_max", 500))
+            num_points = int(settings.value("num_points", 50))
+            n_avg = int(settings.value("num_averages", 10000000))
+            return time_max, num_points, n_avg
+        except (ValueError, TypeError):
+            print("Invalid Inputs, using default values.")
+            return 500, 50, 10000000
+
+class T1(ExperimentBase):
+    def __init__(self):
+
+        self.qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name,
+                                          octave_calibration_db_path=calibration_db_dir)
+        self.qm = self.qmm.open_qm(config, close_other_machines=True)
+
+        ##################
+        #   Parameters   #
+        ##################
+        self.t_vec = None
+        self.length_run, self.num_points, self.n_avg = None, None, None
+        self.is_running = False
+        self.T1 = None
+        self.time_tag_arr = []
+        self.counts, self.counts_ref, self.time_tags, self.iteration = None, None, None, None
+        # Data to save
+        self.save_data_dict = {
+            "n_avg": self.n_avg,
+            "t_vec": self.t_vec,
+            "config": config,
+        }
+
+    def compile_program(self):
+        self.time_tag_arr = []
+        self.length_run, self.num_points, self.n_avg = SettingsDialogT1.get_settings()
+        self.t_vec = np.arange(4, self.length_run // 4, max(1, self.length_run // (4 * self.num_points)))
+        time_arr_len = 1000
+
+        with program() as self.T1:
+            counts = declare(int)  # saves number of photon counts
+            counts_ref = declare(int)  # saves number of photon counts in reference readout
+            times = declare(int, size=time_arr_len)  # QUA vector for storing the time-tags
+            times_ref = declare(int, size=time_arr_len)  # QUA vector for storing the time-tags of reference counts
+            times_st = declare_stream()  # stream to save time tags of counts, ref
+            counts_st = declare_stream()  # stream for counts
+            counts_ref_st = declare_stream()  # stream for reference counts
+            n_st = declare_stream()  # stream to save iterations
+
+            t = declare(int)  # variable to sweep over delay
+            n = declare(int)  # variable to sweep over iterations
+            i = declare(int)  # variable to sweep over time tags
+
+            with for_(n, 0, n < self.n_avg, n + 1):
+                with for_(*from_array(t, self.t_vec)):
+                    play("laser_ON", "AOM2")  # laser on for initialization seems to work better if this is done every loop
+                    wait(wait_for_initialization * u.ns, "AOM2")
+                    align()
+                    wait(t)                                      # wait the variable delay (in clock cycles)
+                    align()
+                    play("laser_ON", "AOM2")        # laser on for readout
+                    measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
+                    save(counts, counts_st)
+                    measure("readout", "SPCM1", time_tagging.analog(times_ref, meas_len_1, counts_ref))
+                    save(counts_ref, counts_ref_st)  # save ref counts
+
+                    # noinspection PyTypeChecker
+                    with for_(i, 0, i < counts, i + 1):
+                        save(times[i], times_st)  # cant directly save QUA vector, loop and save each element separately
+
+                with while_(IO1):  # refocusing loop
+                    play("laser_ON", "AOM2")  # laser on for optimise
+                    wait(wait_for_initialization * u.ns, "AOM2")
+                    align()
+
+                save(n, n_st)  # save number of iteration inside for_loop
+
+            with stream_processing():
+                counts_st.buffer(len(self.t_vec)).average().save("counts")  # save average counts for each point in an array
+                counts_ref_st.buffer(len(self.t_vec)).average().save("counts_ref")
+                times_st.buffer(time_arr_len).save("time_tags")  # save time tags buffer size should be larger than counts expected
+                n_st.save("iteration")
+
+                # save_all creates large buffer of data on OPX
+                # if iterations and point count are too large may exceed memory limit (100E6 int)
+                counts_st.buffer(len(self.t_vec)).save_all("raw_counts")
+                counts_ref_st.buffer(len(self.t_vec)).save_all("raw_counts_ref")
+
+
+    def receive_signal(self):
+        print("Thread: Sleeping until signal received...")
+        address = ("localhost", 6000)
+        listener = Listener(address, authkey=b"secret password")
+        conn = listener.accept()
+        print("connection accepted from", listener.last_accepted)
+        while True:
+            try:
+                msg = conn.recv()
+                print(msg)
+                if msg == "start":
+                    self.qm.set_io1_value(True)
+                    print("Paused")
+                elif msg == "stop":
+                    self.qm.set_io1_value(False)
+                    print("Resumed")
+                elif msg == "close":
+                    conn.close()
+                    break
+            except Exception as ex:
+                print(f"Error: {ex}")
+                break
+
+        listener.close()
+
+    def get_x(self):
+        return self.t_vec * 4  # Convert to ns
+
+    def get_y(self):
+        if self.counts is not None and self.counts_ref is not None:
+            return self.counts / self.counts_ref
+        else:
+            return np.zeros(len(self.t_vec))
+
+    def get_err(self):
+        if self.counts is not None and self.counts_ref is not None and self.iteration is not None:
+            count_err = np.sqrt(self.counts * self.iteration) / self.iteration
+            ref_err = np.sqrt(self.counts_ref * self.iteration) / self.iteration
+            norm_err = (self.counts / self.counts_ref) * np.sqrt((count_err / self.counts) ** 2 + (ref_err / self.counts_ref) ** 2)
+            return norm_err
+        else:
+            return None
+
+    def stop_program(self):
+        self.is_running = False
+        try:
+            self.job.halt()
         except Exception as e:
-            print(e)
-            break
+            print(f"Error halting the job: {e}")
 
-        # Compute normalized signals
-        norm = counts/counts_ref
+    def save_data(self):
+        script_name = Path(__file__).name
+        data_handler = DataHandler(root_data_folder='C:/Users/attocube/Documents/MontanaQudiAttocube/MontanaConfocalAttocube/QM/save_dir')
+        self.save_data_dict.update({"counts_data": self.counts})
+        self.save_data_dict.update({"t_vec": self.t_vec})
+        self.save_data_dict.update({"iteration": np.array([int(self.iteration)])})
+        #self.save_data_dict.update({"time_tag_arr": self.time_tag_arr})
+        self.save_data_dict.update({"counts_ref": self.counts_ref})
+        #self.save_data_dict.update({"raw_counts": np.array(self.raw_counts)})
+        #self.save_data_dict.update({"raw_counts_ref": np.array(self.raw_counts_ref)})
+        data_handler.save_data(data=self.save_data_dict, name=script_name.split(".")[0])
 
-        # Progress bar
-        progress_counter(iteration, n_avg, start_time=results.get_start_time(), progress_bar=True)
+    def get_plot_info(self):
+        return {
+            "x_text": "Time",
+            "x_units": "ns",
+            "y_text": "Normalised signal",
+            "y_units": "arb. units",
+        }
 
-        count_err = np.sqrt(counts*iteration)/iteration     # poisson error estimation
-        ref_err = np.sqrt(counts_ref*iteration)/iteration   # poisson error estimation
-        # Gaussian error propagation for ratio of counts and counts_ref
-        norm_err = norm*np.sqrt((count_err/counts)**2 + (ref_err/counts_ref)**2)
+    def fit(self):
+        x, y, err = self.get_x(), self.get_y(), self.get_err()
 
-        t_vec_ms = 4 * t_vec / 1000000  # Convert t_vec to ms from cycles (4ns) for plotting
+        def decay_func(t, A, T1, C):
+            return A * np.exp(-t / T1) + C
 
-        # Plot data
-        ax1.cla()
-        ax1.errorbar(t_vec_ms, norm, label="counts", yerr=norm_err, capsize=2, fmt='o')
-        ax1.set_ylabel("Signal")
-        ax1.set_title("T1 Decay")
-        ax1.set_xlabel("Wait time [ms]")
-        ax1.legend()
+        # A: amplitude guess (normalized signal ~1)
+        # T1: time constant guess (~1 ms = 1e6 ns)
+        # C: baseline guess (~0.5)
+        popt: object
+        popt, pcov = curve_fit(decay_func, x, y, p0=(1, 1E6, 0.5), sigma=err, absolute_sigma=True)
+        A_fit, T1_fit, C_fit = popt
+        perr = np.sqrt(np.diag(pcov))
+        A_err, T1_err, C_err = perr
+        interp_x = np.linspace(min(x), max(x), 500)
+        fit_y = decay_func(interp_x, *popt)
+        text = f'T1 = {T1_fit / 1E-6:.2f} ± {T1_err / 1E-6:.2f} us'
+        return [interp_x, fit_y, text]
 
-        ax2.cla()
-        for i in time_tags:
-            time_tag_arr[i] += 1    # Convert histogram of time tags to array for faster plotting, saving memory
-        time_tags = []
-        ax2.plot(np.linspace(0, meas_len_1, meas_len_1), time_tag_arr[:])
+    def start_program(self):
+        self.compile_program()
+        simulate = False
+        if simulate:
+            # For debugging the waveform, it's often convenient to simulate a single iteration:
+            #   n_avg = 1
+            #   t_vec = np.array([some_short_delay_in_clock_cycles])
+            # and reduce the duration accordingly.
+            simulation_config = SimulationConfig(duration=3_000)  # In clock cycles = 4ns
+            # Simulate blocks python until the simulation is done
+            job = self.qmm.simulate(config, self.T1, simulation_config)
+            # Get the simulated samples
+            samples = job.get_simulated_samples()
+            # Plot the simulated samples (this will show all pulses/traces produced by the program)
+            samples.con1.plot()
+            # Get the waveform report object
+            waveform_report = job.get_simulated_waveform_report()
+            # Cast the waveform report to a python dictionary
+            waveform_dict = waveform_report.to_dict()
+            # Visualize and save the waveform report
+            waveform_report.create_plot(samples, plot=True, save_path=str(Path(__file__).resolve()))
+        else:
+            # Open quantum machine and execute program
+            self.qm.set_io1_value(False)  # Ensure IO1 is low at the start of the program (not paused)
+            self.job = self.qm.execute(self.T1)  # start the job
 
-        ax3.cla()
-        ax3.errorbar(t_vec_ms, counts, yerr=count_err, capsize=2, fmt='o')
-        ax3.set_ylabel("Signal")
-        ax3.set_title("Counts")
-        ax3.set_xlabel("Wait time [ms]")
+            results = fetching_tool(
+                self.job, data_list=["counts", "counts_ref", "time_tags", "iteration"], mode="live"
+            )
+            t2 = threading.Thread(target=self.receive_signal, daemon=True)  # Thread to receive pause/resume signals from external script
+            t2.start()
 
-        ax4.cla()
-        ax4.errorbar(t_vec_ms, counts_ref, yerr=ref_err, capsize=2, fmt='o')
-        ax4.set_ylabel("Signal")
-        ax4.set_title("Counts Ref")
-        ax4.set_xlabel("Wait time [ms]")
+            while results.is_processing():
+                try:
+                    # Fetch the latest data
+                    self.counts, self.counts_ref, self.time_tags, self.iteration = results.fetch_all()
+                    time.sleep(0.1)  # Small delay to prevent excessive CPU usage
+                except Exception as e:
+                    print(f"Error fetching results: {e}")
+                    break
 
-        plt.pause(0.1)
-
-    results_raw = fetching_tool(
-        job, data_list=["raw_counts", "raw_counts_ref"], mode="wait_for_all"
-    )
-    raw_counts, raw_counts_ref = results_raw.fetch_all()
-
-    # Save results
-    script_name = Path(__file__).name
-    data_handler = DataHandler(root_data_folder='C:/Users/attocube/Documents/MontanaQudiAttocube/MontanaConfocalAttocube/QM/save_dir')
-    save_data_dict.update({"counts_data": counts})
-    save_data_dict.update({"t_vec": t_vec})
-    save_data_dict.update({"iteration": np.array([int(iteration)])})
-    save_data_dict.update({"time_tag_arr": time_tag_arr})
-    save_data_dict.update({"counts_ref": counts_ref})
-    save_data_dict.update({"raw_counts": np.array(raw_counts)})
-    save_data_dict.update({"raw_counts_ref": np.array(raw_counts_ref)})
-    data_handler.save_data(data=save_data_dict, name=script_name.split(".")[0])
 
