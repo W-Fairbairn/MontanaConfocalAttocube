@@ -47,10 +47,10 @@ time_arr_len = 100
 
 # Optional: override x90/-x90 pulse lengths from a Rabi frequency (same approach as Hahn_Echo)
 # Comment this out if you want to use the values already defined in configuration.py.
-rabi_frequency = 7.65 * u.MHz
-ODMR_peak_freq = 23 * u.MHz
+rabi_frequency = 6.5 * u.MHz
+ODMR_peak_freq = -12 * u.MHz
 pi_pulse_len = (1 / (2 * rabi_frequency)) / 1e-9  # ns
-config["octaves"][octave]["RF_outputs"][1]["gain"] = -5
+config["octaves"][octave]["RF_outputs"][1]["gain"] = -10
 print("pi", pi_pulse_len, "ns")
 print("pi/2", pi_pulse_len / 2, "ns")
 config["pulses"]["x180_pulse"]["length"] = (pi_pulse_len) // 4 * 4

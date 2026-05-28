@@ -13,7 +13,7 @@ from scipy.optimize import curve_fit
 from configuration import *
 
 # Load data
-f = np.load("save_dir/2026-05-18/#877_Echo_140251/arrays.npz")
+f = np.load("save_dir/2026-05-21/#898_Echo_Standalone_143101/arrays.npz")
 t_vec = f["t_vec"]
 counts1 = f["counts1_data"]
 counts1_ref = f["counts1_ref_data"]
@@ -23,7 +23,7 @@ counts2 = f["counts2_data"]
 counts2_ref = f["counts2_ref_data"]
 norm2 = counts2 / counts2_ref
 
-iteration = 10000000
+iteration = f["iteration"][0]
 
 #norm1 = 1 / norm1
 diff = (norm1 - norm2)
@@ -151,7 +151,7 @@ if fit1_success and popt1 is not None:
         t_fit,
         t2_decay(t_fit, *popt1),
         "r-",
-        label=f"T2 Fit: {T2_1_fit/1000:.0f} ± {T2_1_err/1000:.0f} us",
+        label=f"T2 Fit: {T2_1_fit:.0f} ± {T2_1_err:.0f} ns",
     )
 ax1.set_ylabel("Norm. Signal")
 ax1.set_title("Hahn Echo")
@@ -166,7 +166,7 @@ if fit2_success and popt2 is not None:
         t_fit,
         t2_decay(t_fit, *popt2),
         "r-",
-        label=f"T2 Fit: {T2_2_fit/1000:.0f} ± {T2_2_err/1000:.0f} us",
+        label=f"T2 Fit: {T2_2_fit:.0f} ± {T2_2_err:.0f} ns",
     )
 
 ax1.legend()
@@ -179,7 +179,7 @@ if fit_success and popt is not None:
         t_fit,
         t2_decay(t_fit, *popt),
         "r-",
-        label=f"T2 Fit: {T2_fit/1000:.0f} ± {T2_err/1000:.0f} us",
+        label=f"T2 Fit: {T2_fit:.0f} ± {T2_err:.0f} ns",
     )
 ax2.set_xlabel("Hahn echo idle time [ns]")
 ax2.set_ylabel("ΔSignal")

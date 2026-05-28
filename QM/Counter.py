@@ -4,6 +4,9 @@ The program consists in playing a laser pulse while performing time tagging cont
 This allows measuring the received photons as a function of time while adjusting external parameters
 to validate the experimental set-up.
 """
+import time
+from settings_dialog_base import SettingsDialogBase
+from experiment_base import ExperimentBase
 import numpy as np
 from pathlib import Path
 from qm import QuantumMachinesManager
@@ -13,57 +16,19 @@ import matplotlib.pyplot as plt
 from configuration import *
 from qualang_tools.results.data_handler import DataHandler
 from math import log10, ceil, floor
-#import seaborn as sns
 from qbstyles import mpl_style
 mpl_style(dark=True)
-import time
-from scipy.optimize import curve_fit
-from PyQt6 import QtCore, QtWidgets, QtGui, uic
-from PyQt6.QtCore import QSettings
-from PyQt6.QtGui import QColor, QAction
-from PyQt6.QtWidgets import (
-    QApplication,
-    QDialog,
-    QDialogButtonBox,
-    QGroupBox,
-    QRadioButton,
-    QVBoxLayout,
-    QLabel,
-    QLineEdit,
-)
-from experiment_base import ExperimentBase
 
-settings = QSettings("Diamond", "QM_Counter")
-class SettingsDialogRabi(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.load_settings()
-        self.setWindowTitle("Settings")
 
-        buttons = (
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel
-        )
+class SettingsDialogCounter(SettingsDialogBase):
+    """Settings dialog persisted in QSettings."""
+    SETTINGS_GROUP = "QM_Counter"
+    WINDOW_TITLE = "Counter Settings"
 
-        button_box = QDialogButtonBox(buttons)
-        button_box.accepted.connect(self.accept)  # type: ignore
-        button_box.rejected.connect(self.reject)  # type: ignore
+    SETTINGS_SCHEMA = {
 
-        # Main layout
-        layout = QVBoxLayout()
+    }
 
-        layout.addWidget(button_box)
-        self.setLayout(layout)
-
-    def load_settings(self):
-        """Load saved settings and update widgets."""
-    def accept(self):
-        """Override accept to save settings when OK button is clicked."""
-        super().accept()
-
-    @staticmethod
-    def get_settings():
-        """Retrieve settings from QSettings. Returns tuple of (freq, time_max, num_points, n_avg)"""
 
 class Counter(ExperimentBase):
     def __init__(self):
@@ -79,20 +44,11 @@ class Counter(ExperimentBase):
         self.counts_data = []
         self.rolling_avg_data = []
 
-    def round_to_1(x):
-        if x != 0:
-            return round(x, -int(floor(log10(abs(x)))))
-        else:
-            return 0
-
     def compile_program(self):
         self.qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name,
                                           octave_calibration_db_path=calibration_db_dir)
         self.qm = self.qmm.open_qm(config, close_other_machines=True)
-        ##################
-        #   Parameters   #
-        ##################
-        # Parameters Definition
+
         n_count = 3000
         meas_len = meas_len_1
 
@@ -132,7 +88,6 @@ class Counter(ExperimentBase):
     def get_y(self):
         """Return counts data in kcps"""
         return np.array(self.counts_data) if len(self.counts_data) > 0 else np.array([])
-
 
     def stop_program(self):
         self.is_running = False

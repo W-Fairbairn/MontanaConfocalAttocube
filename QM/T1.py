@@ -45,65 +45,21 @@ from PyQt6.QtWidgets import (
     QLineEdit,
 )
 from experiment_base import ExperimentBase
+from settings_dialog_base import SettingsDialogBase
 
 settings = QSettings("Diamond", "QM_T1")
 
 
-class SettingsDialogT1(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.load_settings()
-        self.setWindowTitle("Settings")
+class SettingsDialogT1(SettingsDialogBase):
+    SETTINGS_GROUP = "QM_T1"
+    WINDOW_TITLE = "Settings"
 
-        self.time_max = QLineEdit(str(self.time_max), parent=self)
-        self.num_points = QLineEdit(str(self.num_points), parent=self)
-        self.num_averages = QLineEdit(str(self.num_averages), parent=self)
+    SETTINGS_SCHEMA = {
+        "time_max": {"label": "Time max (ns):", "default": 500, "type": int},
+        "num_points": {"label": "Number of points:", "default": 50, "type": int},
+        "num_averages": {"label": "Number of averages:", "default": 10_000_000, "type": int},
+    }
 
-        buttons = (
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel
-        )
-
-        button_box = QDialogButtonBox(buttons)
-        button_box.accepted.connect(self.accept)  # type: ignore
-        button_box.rejected.connect(self.reject)  # type: ignore
-
-        # Main layout
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel("Time max (ns):"))
-        layout.addWidget(self.time_max)
-        layout.addWidget(QLabel("Number of points:"))
-        layout.addWidget(self.num_points)
-        layout.addWidget(QLabel("Number of averages:"))
-        layout.addWidget(self.num_averages)
-
-        layout.addWidget(button_box)
-        self.setLayout(layout)
-
-    def load_settings(self):
-        """Load saved settings and update widgets."""
-        self.time_max = settings.value("time_max", 500)
-        self.num_points = settings.value("num_points", 50)
-        self.num_averages = settings.value("num_averages", 10000000)
-
-    def accept(self):
-        """Override accept to save settings when OK button is clicked."""
-        settings.setValue("time_max", self.time_max.text())
-        settings.setValue("num_points", self.num_points.text())
-        settings.setValue("num_averages", self.num_averages.text())
-        super().accept()
-
-    @staticmethod
-    def get_settings():
-        """Retrieve settings from QSettings. Returns tuple of (freq, time_max, num_points, n_avg)"""
-        try:
-            time_max = int(settings.value("time_max", 500))
-            num_points = int(settings.value("num_points", 50))
-            n_avg = int(settings.value("num_averages", 10000000))
-            return time_max, num_points, n_avg
-        except (ValueError, TypeError):
-            print("Invalid Inputs, using default values.")
-            return 500, 50, 10000000
 
 class T1(ExperimentBase):
     def __init__(self):
@@ -130,7 +86,12 @@ class T1(ExperimentBase):
 
     def compile_program(self):
         self.time_tag_arr = []
-        self.length_run, self.num_points, self.n_avg = SettingsDialogT1.get_settings()
+
+        s = SettingsDialogT1.get_settings()
+        self.length_run = int(s["time_max"])
+        self.num_points = int(s["num_points"])
+        self.n_avg = int(s["num_averages"])
+
         self.t_vec = np.arange(4, self.length_run // 4, max(1, self.length_run // (4 * self.num_points)))
         time_arr_len = 1000
 
@@ -313,5 +274,4 @@ class T1(ExperimentBase):
                 except Exception as e:
                     print(f"Error fetching results: {e}")
                     break
-
 

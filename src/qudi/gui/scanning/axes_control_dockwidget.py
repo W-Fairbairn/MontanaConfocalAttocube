@@ -155,6 +155,15 @@ class AxesControlWidget(QtWidgets.QWidget):
                                       QtWidgets.QSizePolicy.Preferred)
             pos_spinbox.dynamic_precision = False
 
+            # For z focus axes we want sub-micron targeting from the GUI.
+            # Internal units are meters, so 0.1 µm = 1e-7 m.
+            if ax_name.lower() == 'z':
+                # Show enough decimals in typical meter display (e.g. 1.234567e-3 m)
+                # and enforce a minimal step so wheel/arrow stepping reaches 0.1 µm.
+                pos_spinbox.setDecimals(9, dynamic_precision=False)
+                pos_spinbox.setMinimalStep('1e-7')
+                pos_spinbox.setSingleStep('1e-7', dynamic_stepping=False)
+
             # Add to layout
             layout.addWidget(label, index, 0)
             layout.addWidget(res_spinbox, index, 1)

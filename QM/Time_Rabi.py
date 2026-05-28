@@ -38,80 +38,22 @@ from PyQt6.QtWidgets import (
     QLineEdit,
 )
 from experiment_base import ExperimentBase
+from settings_dialog_base import SettingsDialogBase
 
 settings = QSettings("Diamond", "QM_Rabi")
 
 
-class SettingsDialogRabi(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.load_settings()
-        self.setWindowTitle("Settings")
+class SettingsDialogRabi(SettingsDialogBase):
+    SETTINGS_GROUP = "QM_Rabi"
+    WINDOW_TITLE = "Settings"
 
-        self.time_max = QLineEdit(str(self.time_max), parent=self)
-        self.num_points = QLineEdit(str(self.num_points), parent=self)
-        self.num_averages = QLineEdit(str(self.num_averages), parent=self)
-        self.resonant_Frequency = QLineEdit(str(self.resonant_Frequency), parent=self)
-        self.gain = QLineEdit(str(self.gain), parent=self)
-
-        buttons = (
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel
-        )
-
-        button_box = QDialogButtonBox(buttons)
-        button_box.accepted.connect(self.accept)  # type: ignore
-        button_box.rejected.connect(self.reject)  # type: ignore
-
-        # Main layout
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel("Time max (ns):"))
-        layout.addWidget(self.time_max)
-        layout.addWidget(QLabel("Number of points:"))
-        layout.addWidget(self.num_points)
-        layout.addWidget(QLabel("Number of averages:"))
-        layout.addWidget(self.num_averages)
-
-        layout.addWidget(QLabel(""))
-
-        layout.addWidget(QLabel("Resonant Frequency (MHz):"))
-        layout.addWidget(self.resonant_Frequency)
-        layout.addWidget(QLabel("Gain:"))
-        layout.addWidget(self.gain)
-
-        layout.addWidget(button_box)
-        self.setLayout(layout)
-
-    def load_settings(self):
-        """Load saved settings and update widgets."""
-        self.resonant_Frequency = settings.value("resonant_Frequency", 0)
-        self.time_max = settings.value("time_max", 500)
-        self.num_points = settings.value("num_points", 50)
-        self.num_averages = settings.value("num_averages", 10000000)
-        self.gain = settings.value("gain", 15)
-
-    def accept(self):
-        """Override accept to save settings when OK button is clicked."""
-        settings.setValue("resonant_Frequency", self.resonant_Frequency.text())
-        settings.setValue("time_max", self.time_max.text())
-        settings.setValue("num_points", self.num_points.text())
-        settings.setValue("num_averages", self.num_averages.text())
-        settings.setValue("gain", self.gain.text())
-        super().accept()
-
-    @staticmethod
-    def get_settings():
-        """Retrieve settings from QSettings. Returns tuple of (freq, time_max, num_points, n_avg)"""
-        try:
-            freq = float(settings.value("resonant_Frequency", 0.0))
-            time_max = int(settings.value("time_max", 500))
-            num_points = int(settings.value("num_points", 50))
-            n_avg = int(settings.value("num_averages", 10000000))
-            gain = int(settings.value("gain", 15))
-            return freq, time_max, num_points, n_avg, gain
-        except (ValueError, TypeError):
-            print("Invalid Inputs, using default values.")
-            return 0.0, 500, 50, 10000000, 15
+    SETTINGS_SCHEMA = {
+        "time_max": {"label": "Time max (ns):", "default": 500, "type": int},
+        "num_points": {"label": "Number of points:", "default": 50, "type": int},
+        "num_averages": {"label": "Number of averages:", "default": 10_000_000, "type": int, "spacer_after": True},
+        "resonant_Frequency": {"label": "Resonant Frequency (MHz):", "default": 0.0, "type": float},
+        "gain": {"label": "Gain:", "default": 15, "type": int},
+    }
 
 
 class Rabi(ExperimentBase):
@@ -160,7 +102,12 @@ class Rabi(ExperimentBase):
                 )
 
     def compile_program(self):
-        freq, self.length_run, self.num_points, self.n_avg, self.gain = SettingsDialogRabi.get_settings()
+        s = SettingsDialogRabi.get_settings()
+        freq = float(s["resonant_Frequency"])
+        self.length_run = int(s["time_max"])
+        self.num_points = int(s["num_points"])
+        self.n_avg = int(s["num_averages"])
+        self.gain = int(s["gain"])
 
         # Save original values to restore later so other experiments aren't affected.
         self.original_rf_gain = config["octaves"][octave]["RF_outputs"][1].get("gain")

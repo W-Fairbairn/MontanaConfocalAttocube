@@ -15,29 +15,20 @@ Prerequisites:
 Next steps before going to the next node:
     - Update the pi pulse duration, labeled as "mw_len_NV", in the configuration.
 """
-from qm.qua import *
 import pyqtgraph as pg
-
 from PyQt6 import QtCore, QtWidgets, QtGui, uic
 from PyQt6.QtGui import QColor, QAction
 from PyQt6.QtWidgets import QComboBox
 from PyQt6.QtCore import QSettings
-
 import os
 import threading
 import numpy as np
 from qudi.util.colordefs import QudiPalettePale as palette
-from Time_Rabi import Rabi
-from Time_Rabi import SettingsDialogRabi
-from CW_ODMR_GUI import CW_ODMR
-from CW_ODMR_GUI import SettingsDialogODMR
-from Counter import Counter
-from Counter import SettingsDialogRabi as SettingsDialogCounter
-from T1 import T1
-from T1 import SettingsDialogT1
+from Time_Rabi import Rabi, SettingsDialogRabi
+from CW_ODMR_GUI import CW_ODMR, SettingsDialogODMR
+from Counter import Counter, SettingsDialogCounter
+from T1 import T1, SettingsDialogT1
 from Hahn_Echo import HahnEcho, SettingsDialogHahnEcho
-from experiment_base import ExperimentBase
-from styles import Colors, MAIN_WINDOW_STYLESHEET, PLOT_WIDGET_BG, get_textbox_palette, get_toolbar_palette
 from experiment_base import ExperimentBase
 from styles import Colors, MAIN_WINDOW_STYLESHEET, PLOT_WIDGET_BG, get_textbox_palette, get_toolbar_palette
 

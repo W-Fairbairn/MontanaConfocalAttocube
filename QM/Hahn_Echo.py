@@ -22,7 +22,7 @@ from pathlib import Path
 
 import numpy as np
 from PyQt6.QtCore import QSettings
-from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QLineEdit, QVBoxLayout
+from PyQt6.QtWidgets import QDialogButtonBox, QLabel, QLineEdit, QVBoxLayout
 from qm import QuantumMachinesManager, SimulationConfig
 from qm.qua import *
 from qualang_tools.loops import from_array
@@ -31,75 +31,23 @@ from scipy.optimize import curve_fit
 
 from configuration import *  # noqa: F403
 from experiment_base import ExperimentBase
+from settings_dialog_base import SettingsDialogBase
 
-settings = QSettings("Diamond", "QM_HahnEcho")
 
-
-class SettingsDialogHahnEcho(QDialog):
+class SettingsDialogHahnEcho(SettingsDialogBase):
     """Settings dialog persisted in QSettings."""
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.load_settings()
-        self.setWindowTitle("Hahn Echo Settings")
+    SETTINGS_GROUP = "QM_HahnEcho"
+    WINDOW_TITLE = "Hahn Echo Settings"
 
-        self.time_max = QLineEdit(str(self.time_max), parent=self)
-        self.num_points = QLineEdit(str(self.num_points), parent=self)
-        self.num_averages = QLineEdit(str(self.num_averages), parent=self)
-        self.odmr_if_freq_mhz = QLineEdit(str(self.odmr_if_freq_mhz), parent=self)
-        self.rabi_freq_mhz = QLineEdit(str(self.rabi_freq_mhz), parent=self)
-        self.gain = QLineEdit(str(self.gain), parent=self)
-
-        buttons = QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        button_box = QDialogButtonBox(buttons)
-        button_box.accepted.connect(self.accept)  # type: ignore
-        button_box.rejected.connect(self.reject)  # type: ignore
-
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel("Time max (ns, for single τ):"))
-        layout.addWidget(self.time_max)
-        layout.addWidget(QLabel("Number of points:"))
-        layout.addWidget(self.num_points)
-        layout.addWidget(QLabel("Number of averages:"))
-        layout.addWidget(self.num_averages)
-        layout.addWidget(QLabel("ODMR IF frequency (MHz):"))
-        layout.addWidget(self.odmr_if_freq_mhz)
-        layout.addWidget(QLabel("Rabi frequency for π pulse (MHz):"))
-        layout.addWidget(self.rabi_freq_mhz)
-        layout.addWidget(QLabel("Octave RF gain (dB):"))
-        layout.addWidget(self.gain)
-        layout.addWidget(button_box)
-        self.setLayout(layout)
-
-    def load_settings(self):
-        self.time_max = int(settings.value("time_max", 100000))
-        self.num_points = int(settings.value("num_points", 30))
-        self.num_averages = int(settings.value("num_averages", 50_000_000))
-        self.odmr_if_freq_mhz = float(settings.value("odmr_if_freq_mhz", 23.0))
-        self.rabi_freq_mhz = float(settings.value("rabi_freq_mhz", 7.65))
-        self.gain = int(settings.value("gain", -5))
-
-    def accept(self):
-        settings.setValue("time_max", self.time_max.text())
-        settings.setValue("num_points", self.num_points.text())
-        settings.setValue("num_averages", self.num_averages.text())
-        settings.setValue("odmr_if_freq_mhz", self.odmr_if_freq_mhz.text())
-        settings.setValue("rabi_freq_mhz", self.rabi_freq_mhz.text())
-        settings.setValue("gain", self.gain.text())
-        super().accept()
-
-    @staticmethod
-    def get_settings():
-        try:
-            time_max = int(settings.value("time_max", 100000))
-            num_points = int(settings.value("num_points", 30))
-            n_avg = int(settings.value("num_averages", 50_000_000))
-            odmr_if_freq_mhz = float(settings.value("odmr_if_freq_mhz", 23.0))
-            rabi_freq_mhz = float(settings.value("rabi_freq_mhz", 7.65))
-            gain = int(settings.value("gain", -5))
-            return time_max, num_points, n_avg, odmr_if_freq_mhz, rabi_freq_mhz, gain
-        except (ValueError, TypeError):
-            return 100000, 30, 50_000_000, 23.0, 7.65, -5
+    SETTINGS_SCHEMA = {
+        "time_max": {"label": "Time max (ns, for single τ):", "default": 100000, "type": int},
+        "num_points": {"label": "Number of points:", "default": 30, "type": int},
+        "num_averages": {"label": "Number of averages:", "default": 50_000_000, "type": int},
+        "odmr_if_freq_mhz": {"label": "ODMR IF frequency (MHz):", "default": 23.0, "type": float},
+        "rabi_freq_mhz": {"label": "Rabi frequency for π pulse (MHz):", "default": 7.65, "type": float},
+        "gain": {"label": "Octave RF gain (dB):", "default": -5, "type": int},
+    }
 
 
 class HahnEcho(ExperimentBase):
@@ -154,9 +102,13 @@ class HahnEcho(ExperimentBase):
         config["pulses"]["x270_pulse"]["length"] = (pi_pulse_len_ns * 1.5) // 4 * 4
 
     def compile_program(self):
-        self.length_run, self.num_points, self.n_avg, odmr_if_freq_mhz, rabi_freq_mhz, self.gain = (
-            SettingsDialogHahnEcho.get_settings()
-        )
+        s = SettingsDialogHahnEcho.get_settings()
+        self.length_run = int(s["time_max"])
+        self.num_points = int(s["num_points"])
+        self.n_avg = int(s["num_averages"])
+        odmr_if_freq_mhz = float(s["odmr_if_freq_mhz"])
+        rabi_freq_mhz = float(s["rabi_freq_mhz"])
+        self.gain = int(s["gain"])
 
         self.odmr_if_freq = odmr_if_freq_mhz * u.MHz  # noqa: F405
         self.rabi_frequency_mhz = rabi_freq_mhz

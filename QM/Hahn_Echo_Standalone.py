@@ -28,16 +28,16 @@ from qualang_tools.results.data_handler import DataHandler
 ##################
 # Parameters Definition
 num_points = 30
-length_run = 100000
+length_run = 2000
 t_vec = np.arange(4, length_run//4, max(1,length_run//(4*num_points)))
 #t_vec = np.array([4, 1000])
 #print(t_vec)
 n_avg = 50_000_000
 # Rabi frequency for the pi pulse, used to determine the pi pulse duration from the configuration
-rabi_frequency = 7.65 * u.MHz
-ODMR_peak_freq = 23 * u.MHz
+rabi_frequency = 6.5 * u.MHz
+ODMR_peak_freq = -12 * u.MHz
 pi_pulse_len = (1 / (2 * rabi_frequency)) / 1e-9  # ns
-config["octaves"][octave]["RF_outputs"][1]["gain"] = -5
+config["octaves"][octave]["RF_outputs"][1]["gain"] = -10
 print("pi", pi_pulse_len, "ns")
 print("pi/2", pi_pulse_len / 2, "ns")
 config["pulses"]["x180_pulse"]["length"] = (pi_pulse_len) // 4 * 4

@@ -27,101 +27,22 @@ from scipy.optimize import curve_fit
 from scipy.signal import find_peaks
 from PyQt6 import QtCore, QtWidgets, QtGui, uic
 from PyQt6.QtCore import QSettings
-from PyQt6.QtGui import QColor, QAction
-from PyQt6.QtWidgets import (
-    QApplication,
-    QDialog,
-    QDialogButtonBox,
-    QGroupBox,
-    QRadioButton,
-    QVBoxLayout,
-    QLabel,
-    QLineEdit,
-)
 from experiment_base import ExperimentBase
-
-settings = QSettings("Diamond", "QM_ODMR")
-
-
-class SettingsDialogODMR(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.load_settings()
-        self.setWindowTitle("Settings")
-
-        self.readout_len = long_meas_len_1
-        self.freq_min = QLineEdit(str(self.freq_min), parent=self)
-        self.freq_max = QLineEdit(str(self.freq_max), parent=self)
-        self.num_points = QLineEdit(str(self.num_points), parent=self)
-        self.num_averages = QLineEdit(str(self.num_averages), parent=self)
-        self.num_peaks = QLineEdit(str(self.num_peaks), parent=self)
+from settings_dialog_base import SettingsDialogBase
 
 
-        buttons = (
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel
-        )
+class SettingsDialogODMR(SettingsDialogBase):
+    SETTINGS_GROUP = "QM_ODMR"
+    WINDOW_TITLE = "Settings"
 
-        button_box = QDialogButtonBox(buttons)
-        button_box.accepted.connect(self.accept)  # type: ignore
-        button_box.rejected.connect(self.reject)  # type: ignore
-
-        # Main layout
-        layout = QVBoxLayout()
-
-        layout.addWidget(QLabel("Freq min (MHz):"))
-        layout.addWidget(self.freq_min)
-        layout.addWidget(QLabel("Freq max (MHz):"))
-        layout.addWidget(self.freq_max)
-        layout.addWidget(QLabel(""))
-        layout.addWidget(QLabel("Number of points:"))
-        layout.addWidget(self.num_points)
-        layout.addWidget(QLabel("Number of averages:"))
-        layout.addWidget(self.num_averages)
-
-        layout.addWidget(QLabel(""))
-
-        layout.addWidget(QLabel("Number of peaks to fit:"))
-        layout.addWidget(self.num_peaks)
-
-        layout.addWidget(button_box)
-        self.setLayout(layout)
-
-    def load_settings(self):
-        """Load saved settings and update widgets."""
-        self.freq_min = settings.value("freq_min", -150)
-        self.freq_max = settings.value("freq_max", 150)
-        self.num_points = settings.value("num_points", 100)
-        self.num_averages = settings.value("num_averages", 10000000)
-        self.num_peaks = settings.value("num_peaks", 1)
-
-    @staticmethod
-    def load_value(key):
-        """Helper to load a single value from settings."""
-        return settings.value(key, None)
-
-    def accept(self):
-        """Override accept to save settings when OK button is clicked."""
-        settings.setValue("freq_min", self.freq_min.text())
-        settings.setValue("freq_max", self.freq_max.text())
-        settings.setValue("num_points", self.num_points.text())
-        settings.setValue("num_averages", self.num_averages.text())
-        settings.setValue("num_peaks", self.num_peaks.text())
-        super().accept()
-
-    @staticmethod
-    def get_settings():
-        """Retrieve settings from QSettings. Returns tuple of (freq, time_max, num_points, n_avg, num_peaks)"""
-        try:
-            freq_min = float(settings.value("freq_min", -150))
-            freq_max = float(settings.value("freq_max", 150))
-            num_points = int(settings.value("num_points", 100))
-            n_avg = int(settings.value("num_averages", 10000000))
-            num_peaks = int(settings.value("num_peaks", 1))
-            return freq_min, freq_max, num_points, n_avg, num_peaks
-        except (ValueError, TypeError):
-            print("Invalid Inputs, using default values.")
-            return -150, 150, 100, 10000000, 1
+    # Single source of truth for editable settings
+    SETTINGS_SCHEMA = {
+        "freq_min": {"label": "Freq min (MHz):", "default": -150.0, "type": float},
+        "freq_max": {"label": "Freq max (MHz):", "default": 150.0, "type": float},
+        "num_points": {"label": "Number of points:", "default": 100, "type": int},
+        "num_averages": {"label": "Number of averages:", "default": 10_000_000, "type": int, "spacer_after": True},
+        "num_peaks": {"label": "Number of peaks to fit:", "default": 1, "type": int},
+    }
 
 
 class CW_ODMR(ExperimentBase):
@@ -129,9 +50,6 @@ class CW_ODMR(ExperimentBase):
         self.qmm = None
         self.qm = None
         self.job = None
-        ##################
-        #   Parameters   #
-        ##################
         self.is_running = False
         self.num_points = None
         self.length_run = None
@@ -154,7 +72,14 @@ class CW_ODMR(ExperimentBase):
     def compile_program(self):
         # Clear data arrays from previous runs
         self.counts, self.counts_ref, self.iteration, self.time_tags = None, None, None, None
-        freq_min, freq_max, self.num_points, self.n_avg, self.num_peaks = SettingsDialogODMR.get_settings()
+
+        s = SettingsDialogODMR.get_settings()
+        freq_min = float(s["freq_min"])
+        freq_max = float(s["freq_max"])
+        self.num_points = int(s["num_points"])
+        self.n_avg = int(s["num_averages"])
+        self.num_peaks = int(s["num_peaks"])
+
         try:
             self.f_vec = np.arange(freq_min * u.MHz, freq_max * u.MHz, max((freq_max-freq_min)/self.num_points, 1) * u.MHz)
         except Exception as e:
@@ -273,13 +198,10 @@ class CW_ODMR(ExperimentBase):
             return result
 
         try:
-            ############################################
-            # AI wrote this section but seems to work  #
-            ############################################
             # Convert to arrays
             x = np.asarray(x, dtype=float)
             y = np.asarray(y, dtype=float)
-            self.num_peaks = int(SettingsDialogODMR.load_value("num_peaks"))
+            self.num_peaks = int(SettingsDialogODMR.get("num_peaks", 1))
             # --- Peak finding for ODMR dips ---
             # ODMR shows dips in y. Work on an inverted, baseline-corrected, lightly smoothed trace.
             y0 = y - np.median(y)
