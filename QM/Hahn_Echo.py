@@ -29,8 +29,8 @@ from qualang_tools.loops import from_array
 from qualang_tools.results.data_handler import DataHandler
 from scipy.optimize import curve_fit
 
-from configuration import *  # noqa: F403
-from experiment_base import ExperimentBase
+#from configuration import *  # noqa: F403
+from experiment_base import *
 from settings_dialog_base import SettingsDialogBase
 
 

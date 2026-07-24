@@ -4,6 +4,7 @@ Defines the interface that all experiment classes must implement.
 """
 from abc import ABC, abstractmethod
 import numpy as np
+from MontanaConfocalAttocube.QM.configuration import *
 
 
 class ExperimentBase(ABC):

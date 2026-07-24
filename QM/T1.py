@@ -20,7 +20,7 @@ from qm.qua import *
 from qm import SimulationConfig
 import matplotlib.pyplot as plt
 
-from configuration import *
+#from configuration import *
 from qualang_tools.loops import from_array
 from qualang_tools.results.data_handler import DataHandler
 import numpy as np
@@ -44,7 +44,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
 )
-from experiment_base import ExperimentBase
+from experiment_base import *
 from settings_dialog_base import SettingsDialogBase
 
 settings = QSettings("Diamond", "QM_T1")
@@ -64,10 +64,9 @@ class SettingsDialogT1(SettingsDialogBase):
 class T1(ExperimentBase):
     def __init__(self):
 
-        self.qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name,
-                                          octave_calibration_db_path=calibration_db_dir)
-        self.qm = self.qmm.open_qm(config, close_other_machines=True)
-
+        self.conn = None
+        self.qmm = None
+        self.qm = None
         ##################
         #   Parameters   #
         ##################
@@ -76,7 +75,7 @@ class T1(ExperimentBase):
         self.is_running = False
         self.T1 = None
         self.time_tag_arr = []
-        self.counts, self.counts_ref, self.time_tags, self.iteration = None, None, None, None
+        self.counts, self.counts_ref, self.iteration = None, None, None
         # Data to save
         self.save_data_dict = {
             "n_avg": self.n_avg,
@@ -92,8 +91,19 @@ class T1(ExperimentBase):
         self.num_points = int(s["num_points"])
         self.n_avg = int(s["num_averages"])
 
-        self.t_vec = np.arange(4, self.length_run // 4, max(1, self.length_run // (4 * self.num_points)))
+        self.t_vec = np.arange(400, self.length_run // 4, max(1, self.length_run // (4 * self.num_points)))
         time_arr_len = 1000
+
+        import time as time_module
+        print("1")
+        t1 = time_module.time()
+        self.qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name,
+                                          octave_calibration_db_path=calibration_db_dir)
+        print(f"2 (QuantumMachinesManager: {time_module.time() - t1:.2f}s)")
+        t2 = time_module.time()
+        self.qm = self.qmm.open_qm(config, close_other_machines=True)
+        print(f"3 (open_qm: {time_module.time() - t2:.2f}s)")
+        t3 = time_module.time()
 
         with program() as self.T1:
             counts = declare(int)  # saves number of photon counts
@@ -111,8 +121,6 @@ class T1(ExperimentBase):
 
             with for_(n, 0, n < self.n_avg, n + 1):
                 with for_(*from_array(t, self.t_vec)):
-                    play("laser_ON", "AOM2")  # laser on for initialization seems to work better if this is done every loop
-                    wait(wait_for_initialization * u.ns, "AOM2")
                     align()
                     wait(t)                                      # wait the variable delay (in clock cycles)
                     align()
@@ -123,8 +131,8 @@ class T1(ExperimentBase):
                     save(counts_ref, counts_ref_st)  # save ref counts
 
                     # noinspection PyTypeChecker
-                    with for_(i, 0, i < counts, i + 1):
-                        save(times[i], times_st)  # cant directly save QUA vector, loop and save each element separately
+                    #with for_(i, 0, i < counts, i + 1):
+                    #    save(times[i], times_st)  # cant directly save QUA vector, loop and save each element separately
 
                 with while_(IO1):  # refocusing loop
                     play("laser_ON", "AOM2")  # laser on for optimise
@@ -136,24 +144,25 @@ class T1(ExperimentBase):
             with stream_processing():
                 counts_st.buffer(len(self.t_vec)).average().save("counts")  # save average counts for each point in an array
                 counts_ref_st.buffer(len(self.t_vec)).average().save("counts_ref")
-                times_st.buffer(time_arr_len).save("time_tags")  # save time tags buffer size should be larger than counts expected
+                #times_st.buffer(time_arr_len).save("time_tags")  # save time tags buffer size should be larger than counts expected
                 n_st.save("iteration")
 
                 # save_all creates large buffer of data on OPX
                 # if iterations and point count are too large may exceed memory limit (100E6 int)
-                counts_st.buffer(len(self.t_vec)).save_all("raw_counts")
-                counts_ref_st.buffer(len(self.t_vec)).save_all("raw_counts_ref")
+                #counts_st.buffer(len(self.t_vec)).save_all("raw_counts")
+                #counts_ref_st.buffer(len(self.t_vec)).save_all("raw_counts_ref")
+        print(f"4 (program compilation: {time_module.time() - t3:.2f}s)")
 
 
     def receive_signal(self):
         print("Thread: Sleeping until signal received...")
         address = ("localhost", 6000)
         listener = Listener(address, authkey=b"secret password")
-        conn = listener.accept()
         print("connection accepted from", listener.last_accepted)
         while True:
             try:
-                msg = conn.recv()
+                self.conn = listener.accept()
+                msg = self.conn.recv()
                 print(msg)
                 if msg == "start":
                     self.qm.set_io1_value(True)
@@ -162,7 +171,7 @@ class T1(ExperimentBase):
                     self.qm.set_io1_value(False)
                     print("Resumed")
                 elif msg == "close":
-                    conn.close()
+                    self.conn.close()
                     break
             except Exception as ex:
                 print(f"Error: {ex}")
@@ -170,8 +179,10 @@ class T1(ExperimentBase):
 
         listener.close()
 
+
+
     def get_x(self):
-        return self.t_vec * 4  # Convert to ns
+        return self.t_vec * 4 * 1e-9  # Convert to seconds
 
     def get_y(self):
         if self.counts is not None and self.counts_ref is not None:
@@ -194,6 +205,9 @@ class T1(ExperimentBase):
             self.job.halt()
         except Exception as e:
             print(f"Error halting the job: {e}")
+        finally:
+            if self.conn:
+                self.conn.close()
 
     def save_data(self):
         script_name = Path(__file__).name
@@ -210,7 +224,7 @@ class T1(ExperimentBase):
     def get_plot_info(self):
         return {
             "x_text": "Time",
-            "x_units": "ns",
+            "x_units": "s",
             "y_text": "Normalised signal",
             "y_units": "arb. units",
         }
@@ -221,11 +235,20 @@ class T1(ExperimentBase):
         def decay_func(t, A, T1, C):
             return A * np.exp(-t / T1) + C
 
-        # A: amplitude guess (normalized signal ~1)
-        # T1: time constant guess (~1 ms = 1e6 ns)
-        # C: baseline guess (~0.5)
-        popt: object
-        popt, pcov = curve_fit(decay_func, x, y, p0=(1, 1E6, 0.5), sigma=err, absolute_sigma=True)
+        y_span = np.max(y) - np.min(y)
+        A_guess = y_span if y_span > 0 else 1.0
+        C_guess = np.min(y) if y_span > 0 else np.mean(y)
+        T1_guess = max((np.max(x) - np.min(x)) / 2, 1e-12)
+
+        if err is not None and (not np.all(np.isfinite(err)) or np.any(err <= 0)):
+            err = None
+
+        fit_kwargs = {"p0": (A_guess, T1_guess, C_guess), "maxfev": 5000}
+        if err is not None:
+            fit_kwargs["sigma"] = err
+            fit_kwargs["absolute_sigma"] = True
+
+        popt, pcov = curve_fit(decay_func, x, y, **fit_kwargs)
         A_fit, T1_fit, C_fit = popt
         perr = np.sqrt(np.diag(pcov))
         A_err, T1_err, C_err = perr
@@ -261,7 +284,7 @@ class T1(ExperimentBase):
             self.job = self.qm.execute(self.T1)  # start the job
 
             results = fetching_tool(
-                self.job, data_list=["counts", "counts_ref", "time_tags", "iteration"], mode="live"
+                self.job, data_list=["counts", "counts_ref", "iteration"], mode="live"
             )
             t2 = threading.Thread(target=self.receive_signal, daemon=True)  # Thread to receive pause/resume signals from external script
             t2.start()
@@ -269,9 +292,8 @@ class T1(ExperimentBase):
             while results.is_processing():
                 try:
                     # Fetch the latest data
-                    self.counts, self.counts_ref, self.time_tags, self.iteration = results.fetch_all()
+                    self.counts, self.counts_ref, self.iteration = results.fetch_all()
                     time.sleep(0.1)  # Small delay to prevent excessive CPU usage
                 except Exception as e:
                     print(f"Error fetching results: {e}")
                     break
-

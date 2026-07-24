@@ -42,6 +42,21 @@ class AttocubeANC350(AttocubeStageInterface):
         except Exception:
             self.log.exception('AttocubeANC350 reconnect failed')
 
+    def step(self, backward):
+        """Take one step in the requested direction with reconnect/retry."""
+        last_err = None
+        backward = bool(backward)
+        for attempt in range(3):
+            try:
+                self.atc1.startSingleStep(1, backward)
+                return
+            except Exception as exc:
+                last_err = exc
+                self.log.warning(f'Attocube step failed (attempt {attempt + 1}/3): {exc}')
+                time.sleep(0.2)
+                self._reconnect()
+        raise last_err
+
     def move_absolute(self, position):
         """Move Z axis to an absolute position in meters.
 
@@ -65,12 +80,6 @@ class AttocubeANC350(AttocubeStageInterface):
                 self._reconnect()
         # If we get here, all retries failed
         raise last_err
-
-    def move_coarse(self, position):
-        #print(f"Moving attocube stage to Z position {position} m")
-        self.z_pos = position
-        self.atc1.move_to(1, position, precision=0.5e-6)
-        return
 
     def set_dc_voltage(self, channel, volt):
         print("setting dc voltage to ", volt ," V")

@@ -18,7 +18,7 @@ from qm import QuantumMachinesManager
 from qm.qua import *
 from qm import SimulationConfig
 import matplotlib.pyplot as plt
-from configuration import *
+
 from qualang_tools.results.data_handler import DataHandler
 from pathlib import Path
 import time
@@ -27,7 +27,7 @@ from scipy.optimize import curve_fit
 from scipy.signal import find_peaks
 from PyQt6 import QtCore, QtWidgets, QtGui, uic
 from PyQt6.QtCore import QSettings
-from experiment_base import ExperimentBase
+from experiment_base import *
 from settings_dialog_base import SettingsDialogBase
 
 
@@ -61,13 +61,16 @@ class CW_ODMR(ExperimentBase):
         self.counts, self.counts_ref, self.iteration, self.time_tags = None, None, None, None
         self.readout_len = long_meas_len_1
         self.original_rf_gain = None
-        self.cw_rf_gain_db = -15
+        self.cw_rf_gain_db = 5
         # Data to save
         self.save_data_dict = {
             "n_avg": self.n_avg,
             "f_vec": self.f_vec,
             "config": config,
         }
+
+    def _get_nv_lo_freq(self):
+        return config["octaves"][octave]["RF_outputs"][1]["LO_frequency"]
 
     def compile_program(self):
         # Clear data arrays from previous runs
@@ -91,9 +94,16 @@ class CW_ODMR(ExperimentBase):
         # Set the gain for RF output 1 to -15 dB due to cw delivering high power compared to pulsed
         config["octaves"][octave]["RF_outputs"][1]["gain"] = self.cw_rf_gain_db
         config["octaves"][octave]["RF_outputs"][1]["output_mode"] = 'always_on'
+        import time as time_module
+        print("1")
+        t1 = time_module.time()
         self.qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name,
                                           octave_calibration_db_path=calibration_db_dir)
+        print(f"2 (QuantumMachinesManager: {time_module.time() - t1:.2f}s)")
+        t2 = time_module.time()
         self.qm = self.qmm.open_qm(config, close_other_machines=True)
+        print(f"3 (open_qm: {time_module.time() - t2:.2f}s)")
+        t3 = time_module.time()
         ###################
         # The QUA program #
         ###################
@@ -130,10 +140,11 @@ class CW_ODMR(ExperimentBase):
                 # Cast the data into a 1D vector, average the 1D vectors together and store the results on the OPX processor
                 counts_st.buffer(len(self.f_vec)).average().save("counts")
                 n_st.save("iteration")
+        print(f"4 (program compilation: {time_module.time() - t3:.2f}s)")
 
     def get_x(self):
         if self.f_vec is not None:
-            return (NV_LO_freq + self.f_vec)  # Convert to GHz
+            return (self._get_nv_lo_freq() + self.f_vec)
         else:
             return np.array([])
 
@@ -226,12 +237,12 @@ class CW_ODMR(ExperimentBase):
             # Minimum spacing between peaks (in points)
             min_distance_pts = max(1, len(inv) // (max(1, self.num_peaks) * 10))
 
-            peak_idx, props = find_peaks(inv, prominence=prominence, distance=min_distance_pts)
+            peak_idx, props = find_peaks(inv, prominence=prominence, distance=min_distance_pts, width=(2, None))
 
             # If too strict, relax once
             if len(peak_idx) == 0:
                 prominence = 0.015 * inv_range
-                peak_idx, props = find_peaks(inv, prominence=prominence, distance=min_distance_pts)
+                peak_idx, props = find_peaks(inv, prominence=prominence, distance=min_distance_pts, width=(2, None))
 
             if len(peak_idx) == 0:
                 return None, None, (
@@ -260,31 +271,38 @@ class CW_ODMR(ExperimentBase):
             # Perform the fit
             popt, _ = curve_fit(multi_lorentzian, x, y0, p0=p0, maxfev=10000)
 
-            # Generate high-resolution fit curve for plotting (re-add median)
-            x_fit = np.linspace(np.min(x), np.max(x), 1000)
-            y_fit = multi_lorentzian(x_fit, *popt) + np.median(y)
-
-            # Build results text
-            # Each peak -> a small block of 4 lines. We'll lay as many blocks side-by-side as will fit.
-            blocks = []
+            # Filter out unrealistic peaks based on amplitude and width
+            filtered_popt = []
             for i in range(self.num_peaks):
                 f0 = popt[3 * i]
                 A = popt[3 * i + 1]
                 gamma = popt[3 * i + 2]
+                if abs(A) < 1 * inv_range and gamma > 0.003 * x_span:  # Thresholds for amplitude and width
+                    filtered_popt.extend([f0, A, gamma])
+
+            if not filtered_popt:
+                return None, None, "No valid peaks after filtering."
+
+            # Generate high-resolution fit curve for plotting (re-add median)
+            x_fit = np.linspace(np.min(x), np.max(x), 1000)
+            y_fit = multi_lorentzian(x_fit, *filtered_popt) + np.median(y)
+
+            # Build results text
+            blocks = []
+            for i in range(len(filtered_popt) // 3):
+                f0 = filtered_popt[3 * i]
+                A = filtered_popt[3 * i + 1]
+                gamma = filtered_popt[3 * i + 2]
                 blocks.append(
                     [
                         f"Peak {i+1}",
-                        f"Centre: {(f0-NV_LO_freq)/1E6:.2f} MHz",
+                        f"Centre: {(f0-self._get_nv_lo_freq())/1E6:.2f} MHz",
                         f"Contrast:  {(1-((np.max(y)+A)/np.max(y)))*100:.1f} %",
                         f"Width:  {gamma/1E6:.2f} MHz",
                     ]
                 )
 
-            # Column layout: choose how many columns based on an assumed character width.
-            # This is GUI-independent (we don't have direct access to widget width here),
-            # but monospace font in QM_GUI.py makes this approximation reasonable.
             col_w = 26  # chars per peak block column
-            assumed_chars_per_line = 100
             cols = 8
 
             rows = []
@@ -297,7 +315,7 @@ class CW_ODMR(ExperimentBase):
                 rows.append("")
 
             text = "ODMR Fit Results\n"
-            text += f"Peaks fit: {self.num_peaks}    smoothing win: {win}    prominence: {prominence:.3g}\n\n"
+            text += f"Peaks fit: {len(filtered_popt) // 3}    smoothing win: {win}    prominence: {prominence:.3g}\n\n"
             text += "\n".join(rows).rstrip() + "\n"
 
             return x_fit, y_fit, text

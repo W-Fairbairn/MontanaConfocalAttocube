@@ -17,9 +17,10 @@ Next steps before going to the next node:
 """
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtWidgets, QtGui, uic
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QComboBox
 from PyQt6.QtGui import QColor, QAction
 from PyQt6.QtWidgets import QComboBox
-from PyQt6.QtCore import QSettings
+from PyQt6.QtCore import QSettings, Qt
 import os
 import threading
 import numpy as np
@@ -49,7 +50,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, gui_ref=None, experiment="Rabi"):
         # Get the path to the *.ui file
         this_dir = os.path.dirname(__file__)
-        ui_file = os.path.join(this_dir, 'GUI/rabi.ui')
+        ui_file = os.path.join(this_dir, 'GUI/base.ui')
 
         # load ui
         super().__init__()
@@ -122,10 +123,29 @@ class MainGui(QtCore.QObject):
         self.experiment_selector.setCurrentText(self.current_experiment)
         self.experiment_selector.currentTextChanged.connect(self.on_experiment_changed)
 
-        # Add the experiment selector to the toolbar
+        self.clear_fit_button = QtGui.QAction("  Clear Fit  ")
+        self.clear_fit_button.triggered.connect(self.clear_fit)
+        self.clear_fit_button.setIcon(QtGui.QIcon(os.path.join(os.path.dirname(__file__), 'GUI/assets/line-eraser.svg')))
+        self._mw.counting_control_ToolBar.addAction(self.clear_fit_button)
         self._mw.counting_control_ToolBar.addSeparator()
-        self._mw.counting_control_ToolBar.addWidget(QtWidgets.QLabel("Experiment:"))
-        self._mw.counting_control_ToolBar.addWidget(self.experiment_selector)
+
+        # Add the experiment selector to the toolbar
+        spacer = QtWidgets.QWidget()
+        spacer.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
+        self._mw.counting_control_ToolBar.addSeparator()
+        self._mw.counting_control_ToolBar.addWidget(spacer)
+
+        # Add a button to clear the current fit
+
+
+        container = QtWidgets.QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 5, 0, 5)
+        layout.setSpacing(0)
+        layout.addWidget(QtWidgets.QLabel("Experiment:"))
+        layout.addWidget(self.experiment_selector)
+        self._mw.counting_control_ToolBar.addWidget(container)
+
 
         # Initialize the plot items
         self.image = pg.PlotDataItem(np.array([]),
@@ -174,6 +194,12 @@ class MainGui(QtCore.QObject):
         # Initialize the program
         self.init_program()
 
+        # Connect the fit action to toggle continuous fitting
+        self._mw.fit_rabi_Action.setCheckable(False)
+        #self._mw.fit_rabi_Action.triggered.connect(self.fit_clicked)
+
+
+
     def init_program(self):
         """Initialize the appropriate program based on current experiment"""
         program_class, settings_dialog_class = self.classes.get(self.current_experiment, (Counter, SettingsDialogCounter))
@@ -220,7 +246,7 @@ class MainGui(QtCore.QObject):
         except Exception as e:
             print(f"Error getting plot info from program: {e}")
             self._mw.rabi_plot_PlotWidget.setLabel(axis='left', text="y data", units="")
-            self._mw.rabi_plot_PlotWidget.setLabel(axis='bottom', text="x data", units="")
+            self._mw.rabi_plot_PPlotWidget.setLabel(axis='bottom', text="x data", units="")
 
     def save_graph_data(self):
         """Save current graph data for the active experiment"""
@@ -307,6 +333,12 @@ class MainGui(QtCore.QObject):
                 self._mw.fit_results_Text.setPlainText(text)
                 doc_height = self._mw.fit_results_Text.document().size().height() + 10  # Add some padding
                 self._mw.fit_results_Text.setFixedHeight(int(doc_height))
+
+    def clear_fit(self):
+        self.fit_image.setData(np.array([]), np.array([]))
+        self._mw.fit_results_Text.setPlainText("")
+        doc_height = self._mw.fit_results_Text.document().size().height() + 10  # Add some padding
+        self._mw.fit_results_Text.setFixedHeight(int(doc_height))
 
     def save_clicked(self):
         self.program.save_data()

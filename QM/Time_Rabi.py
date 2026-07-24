@@ -20,27 +20,12 @@ from qm import QuantumMachinesManager
 from qm.qua import *
 from qm import SimulationConfig
 import matplotlib.pyplot as plt
-from configuration import *
+#from configuration import *
 from qualang_tools.results.data_handler import DataHandler
 import time
 from scipy.optimize import curve_fit
-from PyQt6 import QtCore, QtWidgets, QtGui, uic
-from PyQt6.QtCore import QSettings
-from PyQt6.QtGui import QColor, QAction
-from PyQt6.QtWidgets import (
-    QApplication,
-    QDialog,
-    QDialogButtonBox,
-    QGroupBox,
-    QRadioButton,
-    QVBoxLayout,
-    QLabel,
-    QLineEdit,
-)
-from experiment_base import ExperimentBase
+from experiment_base import *
 from settings_dialog_base import SettingsDialogBase
-
-settings = QSettings("Diamond", "QM_Rabi")
 
 
 class SettingsDialogRabi(SettingsDialogBase):
@@ -305,74 +290,3 @@ class Rabi(ExperimentBase):
         finally:
             # Always restore original config/hardware settings
             self.restore_config()
-
-'''
-#####################################
-#  Open Communication with the QOP  #
-#####################################
-qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name, octave_calibration_db_path=calibration_db_dir)
-
-#######################
-# Simulate or execute #
-#######################
-simulate = False
-
-if simulate:
-    # Simulates the QUA program for the specified duration
-    simulation_config = SimulationConfig(duration=10_000)  # In clock cycles = 4ns
-    # Simulate blocks python until the simulation is done
-    job = qmm.simulate(config, time_rabi, simulation_config)
-    # Get the simulated samples
-    samples = job.get_simulated_samples()
-    # Plot the simulated samples
-    samples.con1.plot()
-    # Get the waveform report object
-    waveform_report = job.get_simulated_waveform_report()
-    # Cast the waveform report to a python dictionary
-    waveform_dict = waveform_report.to_dict()
-    # Visualize and save the waveform report
-    waveform_report.create_plot(samples, plot=True, save_path=str(Path(__file__).resolve()))
-else:
-    # Open the quantum machine
-    qm = qmm.open_qm(config, close_other_machines=True)
-    # Send the QUA program to the OPX, which compiles and executes it
-    job = qm.execute(time_rabi)
-    # Get results from QUA program
-    results = fetching_tool(job, data_list=["counts", "counts_ref", "iteration", "time_tags"], mode="live")
-    # Live plotting
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 8))
-    interrupt_on_close(fig, job)  # Interrupts the job when closing the figure
-    time_tag_arr = np.zeros(meas_len_1)
-
-    while results.is_processing():
-        # Fetch results
-        counts, counts_ref, iteration, time_tags = results.fetch_all()
-        # Progress bar
-        progress_counter(iteration, n_avg, start_time=results.get_start_time())
-        # Plot data
-        ax1.cla()
-        #ax1.plot(t_vec * 4, counts_ref, label="norm. photon counts")
-        ax1.scatter(t_vec * 4, counts/counts_ref, label="counts")
-        #ax1.xlabel("Rabi pulse duration [ns]")
-        #ax1.ylabel("Counts")
-
-
-        ax2.cla()
-        for i in time_tags:
-            time_tag_arr[i] += 1  # Convert histogram of time tags to array for faster plotting, saving memory
-        time_tags = []
-        ax2.plot(np.linspace(0, meas_len_1, meas_len_1), time_tag_arr[:])
-
-        #plt.legend()
-        plt.pause(0.1)
-    # Save results
-    script_name = Path(__file__).name
-    data_handler = DataHandler(root_data_folder=save_dir)
-    save_data_dict.update({"counts_data": counts})
-    save_data_dict.update({"counts_dark_data": counts_ref})
-    save_data_dict.update({"normalized_data": counts / counts_ref})
-    save_data_dict.update({"iteration": np.array([int(iteration)])})
-    save_data_dict.update({"fig_live": fig})
-    data_handler.additional_files = {script_name: script_name, **default_additional_files}
-    data_handler.save_data(data=save_data_dict, name="_".join(script_name.split("_")[1:]).split(".")[0])
-'''

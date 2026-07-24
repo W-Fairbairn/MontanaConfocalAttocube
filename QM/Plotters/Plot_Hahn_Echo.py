@@ -13,7 +13,7 @@ from scipy.optimize import curve_fit
 from configuration import *
 
 # Load data
-f = np.load("save_dir/2026-05-21/#898_Echo_Standalone_143101/arrays.npz")
+f = np.load("../save_dir/2026-05-21/#898_Echo_Standalone_143101/arrays.npz")
 t_vec = f["t_vec"]
 counts1 = f["counts1_data"]
 counts1_ref = f["counts1_ref_data"]

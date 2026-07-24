@@ -15,3 +15,7 @@ class AttocubeStageInterface(Base):
     @abstractmethod
     def get_position(self):
         pass
+
+    @abstractmethod
+    def step(self, distance):
+        pass

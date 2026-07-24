@@ -6,14 +6,14 @@ to validate the experimental set-up.
 """
 import time
 from settings_dialog_base import SettingsDialogBase
-from experiment_base import ExperimentBase
+from experiment_base import *
 import numpy as np
 from pathlib import Path
 from qm import QuantumMachinesManager
 from qm.qua import *
 from qm import SimulationConfig
 import matplotlib.pyplot as plt
-from configuration import *
+#from configuration import *
 from qualang_tools.results.data_handler import DataHandler
 from math import log10, ceil, floor
 from qbstyles import mpl_style
@@ -45,9 +45,12 @@ class Counter(ExperimentBase):
         self.rolling_avg_data = []
 
     def compile_program(self):
+        print("1")
         self.qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name,
                                           octave_calibration_db_path=calibration_db_dir)
+        print("2")
         self.qm = self.qmm.open_qm(config, close_other_machines=True)
+        print("3")
 
         n_count = 3000
         meas_len = meas_len_1
@@ -68,7 +71,6 @@ class Counter(ExperimentBase):
                 with for_(n, 0, n < n_count, n + 1):
                     # Play the laser pulse...
                     play("laser_ON", "AOM2")
-                    play("laser_ON", "AOM1")
                     # ... while measuring the events from the SPCM
                     measure("readout", "SPCM1", time_tagging.analog(times, meas_len, counts))
                     # Increment the received counts

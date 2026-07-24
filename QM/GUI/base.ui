@@ -6,9 +6,14 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>568</width>
-    <height>529</height>
+    <width>750</width>
+    <height>790</height>
    </rect>
+  </property>
+  <property name="font">
+   <font>
+    <family>MS Reference Sans Serif</family>
+   </font>
   </property>
   <property name="windowTitle">
    <string>qudi: HBT</string>
@@ -16,7 +21,51 @@
   <widget class="QWidget" name="centralwidget">
    <layout class="QVBoxLayout" name="verticalLayout_2">
     <item>
-     <widget class="PlotWidget" name="hbt_plot_PlotWidget"/>
+     <widget class="PlotWidget" name="rabi_plot_PlotWidget"/>
+    </item>
+    <item>
+     <widget class="QTextBrowser" name="fit_results_Text">
+      <property name="sizePolicy">
+       <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+        <horstretch>0</horstretch>
+        <verstretch>0</verstretch>
+       </sizepolicy>
+      </property>
+      <property name="minimumSize">
+       <size>
+        <width>0</width>
+        <height>50</height>
+       </size>
+      </property>
+      <property name="maximumSize">
+       <size>
+        <width>16777215</width>
+        <height>16777215</height>
+       </size>
+      </property>
+      <property name="baseSize">
+       <size>
+        <width>0</width>
+        <height>50</height>
+       </size>
+      </property>
+      <property name="verticalScrollBarPolicy">
+       <enum>Qt::ScrollBarAlwaysOff</enum>
+      </property>
+      <property name="horizontalScrollBarPolicy">
+       <enum>Qt::ScrollBarAsNeeded</enum>
+      </property>
+      <property name="sizeAdjustPolicy">
+       <enum>QAbstractScrollArea::AdjustToContents</enum>
+      </property>
+      <property name="html">
+       <string>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:'MS Reference Sans Serif'; font-size:8.25pt; font-weight:400; font-style:normal;&quot;&gt;
+&lt;p style=&quot;-qt-paragraph-type:empty; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px; font-family:'MS Shell Dlg 2';&quot;&gt;&lt;br /&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+      </property>
+     </widget>
     </item>
    </layout>
   </widget>
@@ -25,7 +74,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>568</width>
+     <width>750</width>
      <height>21</height>
     </rect>
    </property>
@@ -39,6 +88,11 @@
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
   <widget class="QToolBar" name="counting_control_ToolBar">
+   <property name="font">
+    <font>
+     <family>Consolas</family>
+    </font>
+   </property>
    <property name="windowTitle">
     <string>Counting Controls</string>
    </property>
@@ -51,66 +105,92 @@
    <attribute name="toolBarBreak">
     <bool>false</bool>
    </attribute>
-   <addaction name="run_Action"/>
-   <addaction name="fit_Action"/>
-   <addaction name="save_Action"/>
+   <addaction name="run_rabi_Action"/>
+   <addaction name="fit_rabi_Action"/>
+   <addaction name="save_rabi_Action"/>
+   <addaction name="settings_Action"/>
+   <addaction name="separator"/>
   </widget>
-  <action name="run_Action">
+  <action name="run_rabi_Action">
    <property name="checkable">
     <bool>true</bool>
    </property>
    <property name="icon">
     <iconset>
-     <normaloff>../../src/qudi/artwork/icons/qudiTheme/22x22/start-counter.png</normaloff>../../src/qudi/artwork/icons/qudiTheme/22x22/start-counter.png</iconset>
+     <normaloff>assets/start-counter.svg</normaloff>
+     <normalon>assets/stop-counter.svg</normalon>assets/start-counter.svg</iconset>
    </property>
    <property name="text">
     <string>Run</string>
    </property>
    <property name="iconText">
-    <string>Start</string>
+    <string> Start </string>
    </property>
    <property name="toolTip">
     <string>Start a measurement</string>
    </property>
   </action>
-  <action name="save_Action">
+  <action name="save_rabi_Action">
    <property name="icon">
     <iconset>
-     <normaloff>../../src/qudi/artwork/icons/oxygen/22x22/document-save.png</normaloff>../../src/qudi/artwork/icons/oxygen/22x22/document-save.png</iconset>
+     <normaloff>assets/document-save.svg</normaloff>assets/document-save.svg</iconset>
    </property>
    <property name="text">
     <string>Save</string>
+   </property>
+   <property name="iconText">
+    <string>  Save  </string>
    </property>
    <property name="toolTip">
     <string>Save measurement to file</string>
    </property>
   </action>
-  <action name="fit_Action">
+  <action name="fit_rabi_Action">
    <property name="icon">
     <iconset>
-     <normaloff>../../src/qudi/artwork/icons/oxygen/22x22/edit-redo.png</normaloff>../../src/qudi/artwork/icons/oxygen/22x22/edit-redo.png</iconset>
+     <normaloff>assets/graph.svg</normaloff>assets/graph.svg</iconset>
    </property>
    <property name="text">
     <string>Fit</string>
    </property>
+   <property name="iconText">
+    <string>  Fit  </string>
+   </property>
    <property name="toolTip">
     <string>Fit model to the data</string>
+   </property>
+   <property name="font">
+    <font>
+     <family>Consolas</family>
+    </font>
    </property>
   </action>
   <action name="actionClose">
    <property name="icon">
     <iconset>
-     <normaloff>../../src/qudi/artwork/icons/oxygen/22x22/application-exit.png</normaloff>../../src/qudi/artwork/icons/oxygen/22x22/application-exit.png</iconset>
+     <normaloff>../../../../../src/qudi/artwork/icons/oxygen/22x22/application-exit.png</normaloff>../../../../../src/qudi/artwork/icons/oxygen/22x22/application-exit.png</iconset>
    </property>
    <property name="text">
     <string>Close</string>
+   </property>
+  </action>
+  <action name="settings_Action">
+   <property name="icon">
+    <iconset>
+     <normaloff>assets/configure.svg</normaloff>assets/configure.svg</iconset>
+   </property>
+   <property name="text">
+    <string>Settings</string>
+   </property>
+   <property name="toolTip">
+    <string>Setting Dialog</string>
    </property>
   </action>
  </widget>
  <customwidgets>
   <customwidget>
    <class>PlotWidget</class>
-   <extends>QWidget</extends>
+   <extends>QGraphicsView</extends>
    <header>pyqtgraph</header>
   </customwidget>
  </customwidgets>

@@ -345,14 +345,24 @@ class ScanningOptimizeLogic(LogicBase):
             self._optimal_position = dict()
             self.sigOptimizeStateChanged.emit(True, self.optimal_position, None)
             self._sigNextSequenceStep.emit()
+
             return 0
+
+    def notify_client(self, address, msg):
+        import threading
+        def worker():
+            try:
+                conn = Client(address, authkey=b'secret password')
+                conn.send(msg)
+                conn.close()
+            except Exception:
+                self.log.exception('Client notify failed')
+        threading.Thread(target=worker, daemon=True).start()
 
     def _next_sequence_step(self):
         try:
             address = ('localhost', 6000)
-            self.conn = Client(address, authkey=b'secret password')
-            self.conn.send('start')
-            time.sleep(0.1)
+            self.notify_client(address, 'start')
         except Exception as e:
             print(e)
             print("No connection to client, wont stop pulsed measurement")
@@ -372,6 +382,7 @@ class ScanningOptimizeLogic(LogicBase):
                 self._run_z_stage_optimize_step()
                 self._sequence_index += 1
                 if self._sequence_index >= len(self._scan_sequence):
+                    print("sequence index problem")
                     self.stop_optimize()
                 else:
                     self._sigNextSequenceStep.emit()
@@ -446,7 +457,11 @@ class ScanningOptimizeLogic(LogicBase):
         """
         # Keep old behavior (including start/stop messaging) but don't unlock the optimizer module.
         try:
-            self.start_z_stage_optimize()
+            self.z_optimize()
+            try:
+                self.sigOptimizeStateChanged.emit(True, {'z': self.z_stage().get_position(1)}, None)
+            except Exception:
+                self.sigOptimizeStateChanged.emit(True, dict(), None)
         except Exception:
             self.log.exception('Z-stage optimization step failed.')
             # Emit a failed fit so the GUI can indicate invalid optimization.
@@ -457,22 +472,38 @@ class ScanningOptimizeLogic(LogicBase):
             # Abort sequence on failure.
             self.stop_optimize()
 
+    def average_counts(self, num):
+        counts = np.zeros(num)
+        for i in range(num):
+            counts[i] = self._time_tagger().get_counts()
+        return np.median(counts)
 
-    def z_scan(self, pos, times_to_avg):
-        x_data = []
+    def z_optimize(self):
         y_data = []
-        y_data_avg = []
-        for x in pos:
-            x_data.append(self._z_stage().get_position(1))
-            for i in range(times_to_avg):
-                t0 = time.time()
-                self._z_stage().move_absolute(x)
-                #print("time to move to position", time.time() - t0)
-                y_data.append(self._time_tagger().get_counts())
-                #print(self._time_tagger().get_counts())
-            y_data_avg.append(np.median(y_data))
-            y_data = []
-        return x_data, y_data_avg
+        optimised = False
+        backward = True
+        num_averages = 200
+        i = 0
+        print("optimising z")
+        while not optimised:
+            i += 1
+            print(backward)
+            curr_counts = self.average_counts(num_averages)
+            y_data.append(curr_counts)
+            self._z_stage().step(backward)
+            time.sleep(0.25)
+            if self.average_counts(num_averages) < curr_counts:
+                backward = not backward
+
+            x_data = np.linspace(0, len(y_data) - 1, len(y_data))
+            self.sigZOptimizeUpdateGraph.emit({
+                'x': np.array(x_data, dtype=float),
+                'y': np.array(y_data, dtype=float),
+            })
+            if i > 20:
+                optimised = True
+        print("finished optimising z")
+        return
 
     def run_z_stage_scan_0_3000um(self, step_um=10.0, times_to_avg=3, dwell_time_s=0.0,
                                  start_um=0.0, stop_um=3000.0, reverse=False):
@@ -518,174 +549,16 @@ class ScanningOptimizeLogic(LogicBase):
         if reverse:
             pos = pos[::-1]
 
-        x_data = []
-        y_data_avg = []
-
-        for z_target in pos:
-            # Move stage to target z
-            try:
-                self._z_stage().move_absolute(float(z_target))
-            except TypeError:
-                # some implementations accept axis separately; fall back if needed
-                self._z_stage().move_absolute(float(z_target))
-
-            # Acquire counts multiple times and take median
-            samples = []
-            for _ in range(times_to_avg):
-                try:
-                    samples.append(float(self._time_tagger().get_counts()))
-                except Exception:
-                    self.log.exception('Failed to read counts from time_tagger')
-                    samples.append(np.nan)
-                if dwell_time_s and dwell_time_s > 0:
-                    time.sleep(float(dwell_time_s))
-
-            # Prefer the stage-reported position if available
-            try:
-                z_readback = float(self._z_stage().get_position(1))
-            except Exception:
-                try:
-                    z_readback = float(self._z_stage().get_position())
-                except Exception:
-                    z_readback = float(z_target)
-
-            x_data.append(z_readback)
-            y_data_avg.append(float(np.nanmedian(samples)))
-
-            opti_data = {'x': np.array(x_data, dtype=float), 'y': np.array(y_data_avg, dtype=float)}
-            self.sigZOptimizeUpdateGraph.emit(opti_data)
-
-        return np.array(x_data, dtype=float), np.array(y_data_avg, dtype=float)
-
-    def fine_scan(self, v_forward, times_to_avg, DWELL_TIME):
-        y_data_avg = []
-        x_data_avg = []
-        print("fine scan in z")
-        for v in v_forward:
-            self._z_stage().set_dc_voltage(1, v)
-            y_data, x_data = [], []
-            for i in range(times_to_avg):
-                y_data.append(self._time_tagger().get_counts())
-                x_data.append(self._z_stage().get_position(1))
-                time.sleep(DWELL_TIME)
-            y_data_avg.append(np.median(y_data))
-            x_data_avg.append(np.mean(x_data))
-            print("gonna output")
-            print(y_data_avg)
-            opti_data = {'x': np.array(x_data_avg), 'y': np.array(y_data_avg)}
-            self.sigZOptimizeUpdateGraph.emit(opti_data)
-        return x_data_avg, y_data_avg
+        return self.z_scan(pos, times_to_avg=times_to_avg, dwell_time_s=dwell_time_s, fast_move=True)
 
 
-    def start_z_stage_optimize(self):
-        self.z_stage_opti_true = True
-        print("z scan start")
-        self._z_stage().set_dc_voltage(1, 0)
-        print("dc voltage set to 0v")
-        # move attocube stage using attocube hardware connection and read counts using time tagger connection
-        #Get current position of z stage
-        curr_pos = self._z_stage().get_position(1)
-        print("1")
-        print(curr_pos)
-        #self.sigOptimizeStateChanged.emit(False, {'z': curr_pos}, 0)
-        #optim_ranges = [curr_pos - self._scan_range['z'] / 2, curr_pos + self._scan_range['z'] / 2]
-        print(self._scan_range['z'])
-        #self._scan_logic().set_scan_range({'z' : optim_ranges})
-        print("1")
-        #generate some made up data - replace this with time tagger readings
-        '''
-        mu, sigma = curr_pos, 10e-6  # mean and standard deviation
-        pos = np.linspace(optim_ranges[0], optim_ranges[1], self._scan_resolution['z'])[::-1]
-        vals = (1.0 / (np.sqrt(2.0 * np.pi) * sigma) * np.exp(-np.power((pos - mu) / sigma, 2.0) / 2))
+    def _scan_window(self, center, span, points, reverse=False, times_to_avg=1, dwell_time_s=0.0):
+        half_span = float(span) / 2.0
+        positions = np.linspace(float(center) - half_span, float(center) + half_span, int(max(3, points)))
+        if reverse:
+            positions = positions[::-1]
+        return self.z_optimize(positions, times_to_avg=times_to_avg, dwell_time_s=dwell_time_s, fast_move=True)
 
-        while abs(self._z_stage().get_position(1) - pos[0]) > 1e-7:
-            self._z_stage().move_absolute(pos[0])
-        x_data, y_data = self.z_scan(pos, 3)
-        print("finished first z scan")
-        
-        self.sigZOptimizeUpdateGraph.emit(opti_data)
-
-        
-        print("best value", best_value[0])
-        # self._scan_logic().set_target_position({'z': best_value[0]}, move_blocking=True)
-        #print("scan target position set")
-        #print(best_fit)
-        #print(fit_result)
-        max_count_x = x_data[np.argmax(y_data)]
-        max_count = np.max(y_data)
-        #print([x_data[:], y_data[:]])
-        print("pos of max counts (",max_count,"): ", max_count_x)
-        #move stage to best value
-        while abs(self._z_stage().get_position(1) - max_count_x) > 1e-7:
-            self._z_stage().move_absolute(max_count_x)
-
-        print("running finer z scan", max_count_x-1E-6, max_count_x+1E-6)
-        fine_pos = np.linspace(max_count_x-1E-6, max_count_x+1E-6, 500)[::-1]
-        while abs(self._z_stage().get_position(1) - fine_pos[0]) > 1e-7:
-            self._z_stage().move_absolute(fine_pos[0])
-        fine_x_data, fine_y_data = self.z_scan(fine_pos, 2)
-        #print([fine_x_data, fine_y_data])
-        print("scanned")
-        max_count = np.max(fine_y_data)
-        print("looking for ", max_count, " counts at x = ", fine_x_data[np.argmax(fine_y_data)])
-        
-
-        while abs(self._z_stage().get_position(1) - fine_x_data[0]) > 1e-7:
-            self._z_stage().move_absolute(fine_x_data[0])
-        pos2 = np.linspace(max_count_x-1.5e-6, max_count_x+1.5e-6, 300)[::-1]
-        found = False
-        count_arr = []
-        #while not found:
-        for x in pos:
-            for i in range(3):
-                t0 = time.time()
-                self._z_stage().move_absolute(x)
-                # print("time to move to position", time.time() - t0)
-                count_arr.append(self._time_tagger().get_counts())
-                # print(self._time_tagger().get_counts())
-            counts = np.median(count_arr)
-            count_arr = []
-            if counts >= max_count*0.95:
-                found = True
-                print("max counts found")
-                break
-        if not found:
-            print("max counts not found")
-            self._z_stage().move_absolute(max_count_x)
-            print("found:", found)
-        '''
-        SCAN_RANGE_UM = self._scan_range['z']*1E6  # microns
-        NUM_POINTS = self._scan_resolution['z']  # resolution of scan
-        DWELL_TIME = 0.02  # seconds per point (~50 Hz scan)
-        times_to_avg = 10
-        print(self._scan_range['z'])
-        scan_range_volts = self._z_stage().um_to_volts(SCAN_RANGE_UM)
-        print(curr_pos - self._scan_range['z'] / 2)
-        if scan_range_volts > 60:
-            scan_range_volts = 60
-        print("scanning z over ", SCAN_RANGE_UM, " um")
-        v_forward = np.linspace(0, scan_range_volts, NUM_POINTS)
-        print("made array")
-        print("moving to ", curr_pos - self._scan_range['z'] / 2)
-        self._z_stage().move_absolute(curr_pos - self._scan_range['z'] / 2)
-        time.sleep(0.5)
-        x, y = self.fine_scan(v_forward, times_to_avg, DWELL_TIME)
-
-        self._z_stage().set_dc_voltage(1, v_forward[np.argmax(y)])
-
-        opti_data = {'x': np.array(x), 'y': np.array(y)}
-        best_value, best_fit, fit_result = self._get_pos_from_1d_gauss_fit(opti_data['x'], opti_data['y'])
-        test = {'fit_data': best_fit, 'full_fit_res': fit_result}
-        self.sigOptimizeStateChanged.emit(False, {'z': self._z_stage().get_position(1)}, test)
-        print("sig optimize state emitted")
-        self.z_stage_opti_true = False
-        try:
-            self.conn.send('stop')
-            print("sent message to client to start pulsed measurement")
-        except Exception as e:
-            print(e)
-            print("failed to send message to client to start pulsed measurement")
-        return
 
     def z_stage_startup_procedure(self):
         # get settings and current parameters so that on startup the ui is updated with stage current position
@@ -724,7 +597,8 @@ class ScanningOptimizeLogic(LogicBase):
                 self.module_state.unlock()
             except Exception:
                 pass
-
+            address = ('localhost', 6000)
+            self.notify_client(address, 'stop')
             self.sigOptimizeStateChanged.emit(False, dict(), None)
             return err
 
