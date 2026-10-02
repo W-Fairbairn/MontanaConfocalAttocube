@@ -17,7 +17,6 @@ Next steps before going to the next node:
 from qm import QuantumMachinesManager
 from qm.qua import *
 from qm import SimulationConfig
-import matplotlib.pyplot as plt
 
 from qualang_tools.results.data_handler import DataHandler
 from pathlib import Path
@@ -25,8 +24,6 @@ import time
 import numpy as np
 from scipy.optimize import curve_fit
 from scipy.signal import find_peaks
-from PyQt6 import QtCore, QtWidgets, QtGui, uic
-from PyQt6.QtCore import QSettings
 from experiment_base import *
 from settings_dialog_base import SettingsDialogBase
 
@@ -42,11 +39,14 @@ class SettingsDialogODMR(SettingsDialogBase):
         "num_points": {"label": "Number of points:", "default": 100, "type": int},
         "num_averages": {"label": "Number of averages:", "default": 10_000_000, "type": int, "spacer_after": True},
         "num_peaks": {"label": "Number of peaks to fit:", "default": 1, "type": int},
+        "gain": {"label": "Gain (db):", "default": -5, "type": int}
     }
 
 
 class CW_ODMR(ExperimentBase):
     def __init__(self):
+        super().__init__()
+        self.conn = None
         self.qmm = None
         self.qm = None
         self.job = None
@@ -61,7 +61,7 @@ class CW_ODMR(ExperimentBase):
         self.counts, self.counts_ref, self.iteration, self.time_tags = None, None, None, None
         self.readout_len = long_meas_len_1
         self.original_rf_gain = None
-        self.cw_rf_gain_db = 5
+        self.cw_rf_gain_db = None
         # Data to save
         self.save_data_dict = {
             "n_avg": self.n_avg,
@@ -82,6 +82,7 @@ class CW_ODMR(ExperimentBase):
         self.num_points = int(s["num_points"])
         self.n_avg = int(s["num_averages"])
         self.num_peaks = int(s["num_peaks"])
+        self.cw_rf_gain_db = int(s["gain"])
 
         try:
             self.f_vec = np.arange(freq_min * u.MHz, freq_max * u.MHz, max((freq_max-freq_min)/self.num_points, 1) * u.MHz)
@@ -117,23 +118,12 @@ class CW_ODMR(ExperimentBase):
 
             with for_(n, 0, n < self.n_avg, n + 1):
                 with for_(*from_array(f, self.f_vec)):
-                    # Update the frequency of the digital oscillator linked to the element "NV"
                     update_frequency("NV", f)
-                    # align all elements before starting the sequence
-                    align()
-                    # Play the mw pulse...
                     play("cw" * amp(1), "NV", duration=self.readout_len * u.ns)
-                    # ... and the laser pulse simultaneously (the laser pulse is delayed by 'laser_delay_1')
                     play("laser_ON", "AOM2", duration=self.readout_len * u.ns)
-                    wait(1_000 * u.ns, "SPCM1")  # so readout don't catch the first part of spin reinitialization
-                    # Measure and detect the photons on SPCM1
-
                     measure("long_readout", "SPCM1", time_tagging.analog(times, self.readout_len, counts))
-
                     save(counts, counts_st)  # save counts on stream
-
-                    wait(wait_between_runs * u.ns)
-
+                    self.refocus_loop()
                     save(n, n_st)  # save number of iteration inside for_loop
 
             with stream_processing():
@@ -163,6 +153,9 @@ class CW_ODMR(ExperimentBase):
         finally:
             # Restore the original config when stopping
             self.restore_config()
+            if self.conn:
+                self.conn.close()
+            self.close_signal_listener()
 
     def save_data(self):
         # Save results
@@ -235,7 +228,7 @@ class CW_ODMR(ExperimentBase):
             # Use prominence instead of height. Height fails when baseline shifts, but prominence is robust.
             prominence = 0.03 * inv_range  # start at 3% of contrast
             # Minimum spacing between peaks (in points)
-            min_distance_pts = max(1, len(inv) // (max(1, self.num_peaks) * 10))
+            min_distance_pts = max(1, len(inv) // (max(1, self.num_peaks) * 100))
 
             peak_idx, props = find_peaks(inv, prominence=prominence, distance=min_distance_pts, width=(2, None))
 
@@ -359,6 +352,8 @@ class CW_ODMR(ExperimentBase):
             try:
                 self.job = self.qm.execute(self.cw_odmr)
                 results = fetching_tool(self.job, data_list=["counts", "iteration"], mode="live")
+                self.start_signal_listener()
+
                 while results.is_processing():
                     self.counts, self.iteration = results.fetch_all()
                     time.sleep(0.01)
@@ -366,3 +361,4 @@ class CW_ODMR(ExperimentBase):
             finally:
                 # Always restore the original config, even if an error occurs
                 self.restore_config()
+                self.close_signal_listener()

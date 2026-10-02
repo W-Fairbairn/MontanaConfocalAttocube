@@ -12,10 +12,7 @@ from pathlib import Path
 from qm import QuantumMachinesManager
 from qm.qua import *
 from qm import SimulationConfig
-import matplotlib.pyplot as plt
 #from configuration import *
-from qualang_tools.results.data_handler import DataHandler
-from math import log10, ceil, floor
 from qbstyles import mpl_style
 mpl_style(dark=True)
 
@@ -32,6 +29,7 @@ class SettingsDialogCounter(SettingsDialogBase):
 
 class Counter(ExperimentBase):
     def __init__(self):
+        super().__init__()
 
         self.qmm =None
         self.qm = None
@@ -59,7 +57,7 @@ class Counter(ExperimentBase):
         # The QUA program #
         ###################
         with program() as self.counter:
-            times = declare(int, size=1000)  # QUA vector for storing the time-tags
+            times = declare(int, size=100)  # QUA vector for storing the time-tags
             counts = declare(int)  # variable for number of counts of a single chunk
             total_counts = declare(int)  # variable for the total number of counts
             n = declare(int)  # number of iterations
@@ -79,6 +77,7 @@ class Counter(ExperimentBase):
                 # Save the counts
                 save(total_counts, counts_st)
                 assign(total_counts, 0)
+                self.refocus_loop()
 
             with stream_processing():
                 counts_st.with_timestamps().save_all("counts")
@@ -97,6 +96,8 @@ class Counter(ExperimentBase):
             self.job.halt()
         except Exception as e:
             print(f"Error halting the job: {e}")
+        finally:
+            self.close_signal_listener()
     simulate = False
 
     def save_data(self):

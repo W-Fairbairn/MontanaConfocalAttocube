@@ -47,10 +47,10 @@ time_arr_len = 100
 
 # Optional: override x90/-x90 pulse lengths from a Rabi frequency (same approach as Hahn_Echo)
 # Comment this out if you want to use the values already defined in configuration.py.
-rabi_frequency = 6.5 * u.MHz
-ODMR_peak_freq = -12 * u.MHz
+rabi_frequency = 10.55 * u.MHz
+ODMR_peak_freq = -131 * u.MHz
 pi_pulse_len = (1 / (2 * rabi_frequency)) / 1e-9  # ns
-config["octaves"][octave]["RF_outputs"][1]["gain"] = -10
+config["octaves"][octave]["RF_outputs"][1]["gain"] = 0
 print("pi", pi_pulse_len, "ns")
 print("pi/2", pi_pulse_len / 2, "ns")
 config["pulses"]["x180_pulse"]["length"] = (pi_pulse_len) // 4 * 4
@@ -93,11 +93,12 @@ with program() as x90_test:
     # One-time laser spin init like Hahn_Echo
     play("laser_ON", "AOM2")
     wait(wait_between_runs * u.ns, "AOM2")
+    t = 4000
     update_frequency("NV", ODMR_peak_freq, keep_phase=True)
     with for_(n, 0, n < n_avg, n + 1):
         # --- no MW baseline ---
         #reset_if_phase("NV")
-        play("laser_ON", "AOM2")
+        '''play("laser_ON", "AOM2")
         wait(wait_between_runs * u.ns, "AOM2")
         align()
         play("laser_ON", "AOM2")
@@ -107,14 +108,16 @@ with program() as x90_test:
         measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
         save(counts, counts_nomw_ref_st)
 
-        wait(wait_between_runs * u.ns, "AOM2")
+        wait(wait_between_runs * u.ns, "AOM2")'''
 
         # --- x90 sequence ---
         #reset_if_phase("NV")  # ensure consistent phase reference for the test, but not strictly necessary for a sanity check
         #update_frequency("NV", ODMR_peak_freq)
         align()
         play("x90" * amp(1), "NV")
-        #align("NV")
+        wait(t)
+        play("x180" * amp(1), "NV")
+        wait(t)
         play("x90" * amp(1), "NV")
         align()
         play("laser_ON", "AOM2")
@@ -130,9 +133,13 @@ with program() as x90_test:
         #reset_if_phase("NV")
         #update_frequency("NV", ODMR_peak_freq)
         align()
+        align()
         play("x90" * amp(1), "NV")
-        #wait(10000, "NV")
+        wait(t)
+        play("x180" * amp(1), "NV")
+        wait(t)
         play("-x90" * amp(1), "NV")
+        align()
           # short wait to ensure the two pulses are not perfectly back-to-back, which can cause issues with some AOMs
         align()
         play("laser_ON", "AOM2")
@@ -143,13 +150,15 @@ with program() as x90_test:
         save(counts, counts_mx90_ref_st)
 
         wait(wait_between_runs * u.ns, "AOM2")
-
+        '''
         # --- x180 sequence (comparison) ---
         #reset_if_phase("NV")
         #update_frequency("NV", ODMR_peak_freq)
         align()
         play("x180" * amp(1), "NV")
         align()
+        #wait(400000)
+        #align()
         play("laser_ON", "AOM2")
         measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
         save(counts, counts_x180_st)
@@ -158,18 +167,18 @@ with program() as x90_test:
         save(counts, counts_x180_ref_st)
 
         wait(wait_between_runs * u.ns, "AOM2")
-
+        '''
         save(n, n_st)
 
     with stream_processing():
-        counts_nomw_st.average().save("counts_nomw")
-        counts_nomw_ref_st.average().save("counts_nomw_ref")
+        #counts_nomw_st.average().save("counts_nomw")
+        #counts_nomw_ref_st.average().save("counts_nomw_ref")
         counts_x90_st.average().save("counts_x90")
         counts_x90_ref_st.average().save("counts_x90_ref")
         counts_mx90_st.average().save("counts_mx90")
         counts_mx90_ref_st.average().save("counts_mx90_ref")
-        counts_x180_st.average().save("counts_x180")
-        counts_x180_ref_st.average().save("counts_x180_ref")
+        #counts_x180_st.average().save("counts_x180")
+        #counts_x180_ref_st.average().save("counts_x180_ref")
         n_st.save("iteration")
 
 #####################################
@@ -181,7 +190,7 @@ qmm = QuantumMachinesManager(
     octave_calibration_db_path=calibration_db_dir,
 )
 
-simulate = False
+simulate = True
 
 if simulate:
     job = qmm.simulate(config, x90_test, SimulationConfig(duration=10_000))

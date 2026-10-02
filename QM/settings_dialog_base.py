@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Type
 
 from PyQt6.QtCore import QSettings
-from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QLineEdit, QVBoxLayout
+from PyQt6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QLabel, QLineEdit, QVBoxLayout
 
 
 @dataclass(frozen=True)
@@ -37,6 +37,7 @@ class SettingField:
     label: str
     default: Any
     type: Type
+    widget: str = "lineedit"
     spacer_after: bool = False
 
 
@@ -62,14 +63,17 @@ class SettingsDialogBase(QDialog):
         super().__init__(parent)
         self.setWindowTitle(self.WINDOW_TITLE)
 
-        # key -> QLineEdit
-        self.settable_values: Dict[str, QLineEdit] = {}
+        # key -> input widget
+        self.settable_values: Dict[str, Any] = {}
 
         layout = QVBoxLayout()
 
         for key, field in self._iter_fields():
             layout.addWidget(QLabel(field.label))
-            w = QLineEdit(parent=self)
+            if field.widget == "checkbox" or field.type is bool:
+                w = QCheckBox(parent=self)
+            else:
+                w = QLineEdit(parent=self)
             self.settable_values[key] = w
             layout.addWidget(w)
             if field.spacer_after:
@@ -92,10 +96,14 @@ class SettingsDialogBase(QDialog):
     # --- schema helpers ---
     @classmethod
     def _field_from_meta(cls, meta: Dict[str, Any]) -> SettingField:
+        widget = meta.get("widget")
+        if not widget:
+            widget = "checkbox" if meta.get("type", str) is bool else "lineedit"
         return SettingField(
             label=str(meta.get("label", "")),
             default=meta.get("default", None),
             type=meta.get("type", str),
+            widget=str(widget),
             spacer_after=bool(meta.get("spacer_after", False)),
         )
 
@@ -143,6 +151,19 @@ class SettingsDialogBase(QDialog):
             except Exception:
                 return str(default) if default is not None else ""
 
+        if t is bool:
+            if isinstance(raw_value, bool):
+                return raw_value
+            if isinstance(raw_value, (int, float)):
+                return bool(raw_value)
+            if isinstance(raw_value, str):
+                s = raw_value.strip().lower()
+                if s in ("1", "true", "t", "yes", "y", "on"):
+                    return True
+                if s in ("0", "false", "f", "no", "n", "off", ""):
+                    return False
+            return bool(raw_value)
+
         try:
             return t(raw_value)
         except Exception:
@@ -187,11 +208,24 @@ class SettingsDialogBase(QDialog):
         for key, field in self._iter_fields():
             raw = qs.value(key, field.default)
             value = self.coerce_value(key, raw)
-            self.settable_values[key].setText(str(value))
+            widget = self.settable_values[key]
+            if isinstance(widget, QCheckBox):
+                widget.setChecked(bool(value))
+            else:
+                widget.setText(str(value))
+
+    @classmethod
+    def set(cls, name, value):
+        qs = cls.qsettings()
+        qs.setValue(name, value)
 
     def accept(self) -> None:
         """Save widget contents back to QSettings."""
         qs = self.qsettings()
         for key in self.SETTINGS_SCHEMA.keys():
-            qs.setValue(key, self.settable_values[key].text())
+            widget = self.settable_values[key]
+            if isinstance(widget, QCheckBox):
+                qs.setValue(key, widget.isChecked())
+            else:
+                qs.setValue(key, widget.text())
         super().accept()

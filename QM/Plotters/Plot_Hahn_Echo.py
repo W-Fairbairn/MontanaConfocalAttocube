@@ -10,10 +10,10 @@ sys.path.insert(0, parentdir)
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
-from configuration import *
+from MontanaConfocalAttocube.QM.configuration import *
 
 # Load data
-f = np.load("../save_dir/2026-05-21/#898_Echo_Standalone_143101/arrays.npz")
+f = np.load("../save_dir/2026-09-22/#1406_hahn_echo_085657/arrays.npz")
 t_vec = f["t_vec"]
 counts1 = f["counts1_data"]
 counts1_ref = f["counts1_ref_data"]
@@ -24,6 +24,7 @@ counts2_ref = f["counts2_ref_data"]
 norm2 = counts2 / counts2_ref
 
 iteration = f["iteration"][0]
+print(iteration)
 
 #norm1 = 1 / norm1
 diff = (norm1 - norm2)

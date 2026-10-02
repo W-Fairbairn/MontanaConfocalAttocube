@@ -25,6 +25,10 @@ class FakeAttocubeANC350(AttocubeStageInterface):
         time.sleep(0.1) #fake stage movement wait time
         return
 
+    def step(self, distance):
+        self.move_absolute(self.z_pos + distance)
+        return
+
     def get_position(self):
         return self.z_pos
 

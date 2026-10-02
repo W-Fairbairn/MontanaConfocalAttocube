@@ -372,7 +372,8 @@ class ScannerGui(GuiBase):
 
     def _init_static_dockwidgets(self):
         self.scanner_control_dockwidget = AxesControlDockWidget(
-            tuple(self._scanning_logic().scanner_axes.values())
+            tuple(self._scanning_logic().scanner_axes.values()),
+            z_stage=self._scanning_logic()._z_stage()
         )
         if self._default_position_unit_prefix is not None:
             self.scanner_control_dockwidget.set_assumed_unit_prefix(

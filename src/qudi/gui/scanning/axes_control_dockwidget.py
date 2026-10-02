@@ -36,10 +36,10 @@ class AxesControlDockWidget(QtWidgets.QDockWidget):
                                       'get_range', 'set_range', 'get_target', 'set_target',
                                       'set_assumed_unit_prefix'})
 
-    def __init__(self, scanner_axes):
+    def __init__(self, scanner_axes, z_stage=None):
         super().__init__('Axes Control')
         self.setObjectName('axes_control_dockWidget')
-        widget = AxesControlWidget(scanner_axes=scanner_axes)
+        widget = AxesControlWidget(scanner_axes=scanner_axes, z_stage=z_stage)
         widget.setObjectName('axes_control_widget')
         self.setWidget(widget)
         return
@@ -59,10 +59,11 @@ class AxesControlWidget(QtWidgets.QWidget):
     sigTargetChanged = QtCore.Signal(str, float)
     sigSliderMoved = QtCore.Signal(str, float)
 
-    def __init__(self, *args, scanner_axes, **kwargs):
+    def __init__(self, *args, scanner_axes, z_stage=None, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.axes_widgets = dict()
+        self._z_stage = z_stage
 
         font = QtGui.QFont()
         font.setBold(True)
@@ -130,7 +131,17 @@ class AxesControlWidget(QtWidgets.QWidget):
             max_spinbox.setSizePolicy(QtWidgets.QSizePolicy.Preferred,
                                       QtWidgets.QSizePolicy.Preferred)
 
-            init_pos = (axis.max_value - axis.min_value) / 2 + axis.min_value
+            init_pos = axis.min_value
+            
+            # For z-axis, try to get current position from z stage
+            if ax_name.lower() == 'z' and self._z_stage is not None:
+                try:
+                    z_current = self._z_stage.get_position(1)
+                    if axis.min_value <= z_current <= axis.max_value:
+                        init_pos = z_current
+                except Exception:
+                    # If unable to get position, fall back to min_value
+                    pass
 
             slider = DoubleSlider(QtCore.Qt.Horizontal)
             slider.setObjectName('{0}_position_doubleSlider'.format(ax_name))

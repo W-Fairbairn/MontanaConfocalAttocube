@@ -90,6 +90,8 @@ class ScanningProbeLogic(LogicBase):
         self._tilt_corr_axes = []
         # holds synthetic scan data for stage-driven z scans (so scan_widget can plot it)
         self._stage_z_scan_data = None
+        # holds synthetic scan data for stage-driven xz scans (so scan_widget can plot it)
+        self._stage_xz_scan_data = None
 
     def on_activate(self):
         """ Initialisation performed during activation of the module.
@@ -526,6 +528,12 @@ class ScanningProbeLogic(LogicBase):
             if scan_axes == ('z',):
                 return self._start_stage_z_scan(caller_id=caller_id)
 
+            # Special case: 2D xz scan. Same stage-driven approach as the 1D z scan
+            # (step the external Attocube stage in z), but with an additional inner loop
+            # that sweeps the fast x axis via the normal scanner at each z step.
+            if set(scan_axes) == {'x', 'z'}:
+                return self._start_stage_xz_scan(caller_id=caller_id)
+
             self._curr_caller_id = self.module_uuid if caller_id is None else caller_id
 
             self.module_state.lock()
@@ -675,6 +683,152 @@ class ScanningProbeLogic(LogicBase):
         finally:
             self.__scan_stop_requested = True
             self.module_state.unlock()
+
+    def _start_stage_xz_scan(self, caller_id=None):
+        """Run a 2D xz scan by stepping the Attocube stage in z and, at each z step,
+        sweeping the fast x axis via the normal scanner while reading counts.
+
+        Uses the same stage-control method as _start_stage_z_scan (move_absolute on the
+        z stage + timetagger counts). The resulting data is emitted via sigScanStateChanged
+        using scan axes ('x', 'z') so it is displayed in the regular xz scan_widget.
+        """
+        self._curr_caller_id = self.module_uuid if caller_id is None else caller_id
+        self.__scan_stop_requested = False
+        self.module_state.lock()
+
+        try:
+            channels = self.scanner_channels
+            if not channels:
+                raise RuntimeError('No scanner channels defined; cannot create xz scan data')
+            channel_name = next(iter(channels.keys()))
+
+            try:
+                x_start, x_stop = (float(self._scan_ranges['x'][0]), float(self._scan_ranges['x'][1]))
+            except Exception:
+                x_ax = self.scanner_constraints.axes['x']
+                x_start, x_stop = float(x_ax.value_range[0]), float(x_ax.value_range[1])
+
+            try:
+                z_start, z_stop = (float(self._scan_ranges['z'][0]), float(self._scan_ranges['z'][1]))
+            except Exception:
+                z_ax = self.scanner_constraints.axes['z']
+                z_start, z_stop = float(z_ax.value_range[0]), float(z_ax.value_range[1])
+
+            # Hard clamp z to stage max, same as the 1D stage z scan
+            z_start = min(z_start, self._stage_z_hard_max)
+            z_stop = min(z_stop, self._stage_z_hard_max)
+            if z_stop < z_start:
+                z_start, z_stop = z_stop, z_start
+
+            try:
+                n_x = max(2, int(self._scan_resolution.get('x', 50)))
+            except Exception:
+                n_x = 50
+            try:
+                n_z = max(2, int(self._scan_resolution.get('z', 50)))
+            except Exception:
+                n_z = 50
+
+            x_positions = np.linspace(x_start, x_stop, n_x)
+            z_positions = np.linspace(z_start, z_stop, n_z)
+
+            # hardcoded averaging per point, same as the 1D stage z scan
+            avg_n = 3
+
+            counts = np.full((n_x, n_z), np.nan, dtype=float)
+            scan_range = ((x_start, x_stop), (z_start, z_stop))
+            scan_resolution = (n_x, n_z)
+            scan_frequency = float(self._scan_frequency.get('x', 1.0))
+
+            stage_failures = 0
+            for j, z in enumerate(z_positions):
+                if self.__scan_stop_requested:
+                    break
+
+                try:
+                    self._z_stage().move_absolute(float(z))
+                    stage_failures = 0
+                except Exception:
+                    stage_failures += 1
+                    self.log.exception('Failed to move z_stage during xz scan')
+                    # Abort quickly if stage comms are failing
+                    if stage_failures >= 2:
+                        self.__scan_stop_requested = True
+                        try:
+                            if hasattr(self._z_stage(), 'stop'):
+                                self._z_stage().stop()
+                        except Exception:
+                            pass
+                        break
+                    # otherwise skip this line
+                    continue
+
+                for i, x in enumerate(x_positions):
+                    if self.__scan_stop_requested:
+                        break
+
+                    try:
+                        self._scanner().move_absolute({'x': float(x)}, blocking=True)
+                    except Exception:
+                        self.log.exception('Failed to move scanner x during xz scan')
+                        continue
+
+                    try:
+                        samples = []
+                        for _ in range(max(1, int(avg_n))):
+                            samples.append(float(self._time_tagger().get_counts()))
+                        counts[i, j] = float(np.nanmean(samples))
+                    except Exception:
+                        self.log.exception('Failed to read timetagger counts during xz scan')
+                        counts[i, j] = np.nan
+
+                # Emit incremental ScanData once per completed z line for live plotting
+                sd = self._make_stage_xz_scan_data(
+                    channel_name=channel_name,
+                    scan_range=scan_range,
+                    scan_resolution=scan_resolution,
+                    scan_frequency=scan_frequency,
+                    counts=counts.copy(),
+                )
+                self._stage_xz_scan_data = sd
+                self.sigScanStateChanged.emit(True, sd, self._curr_caller_id)
+
+            # ensure GUI sees that scan stopped
+            if self._stage_xz_scan_data is None:
+                self._stage_xz_scan_data = self._make_stage_xz_scan_data(
+                    channel_name=channel_name,
+                    scan_range=scan_range,
+                    scan_resolution=scan_resolution,
+                    scan_frequency=scan_frequency,
+                    counts=counts.copy(),
+                )
+
+            self.sigScanStateChanged.emit(False, self._stage_xz_scan_data, self.module_uuid)
+            return 0
+
+        finally:
+            self.__scan_stop_requested = True
+            self.module_state.unlock()
+
+    def _make_stage_xz_scan_data(self, channel_name, scan_range, scan_resolution, scan_frequency, counts):
+        """Create a ScanData object matching the normal scan_widget expectations for a 2D xz scan."""
+        from qudi.interface.scanning_probe_interface import ScanData
+
+        constr = self.scanner_constraints
+        x_axis = constr.axes['x']
+        z_axis = constr.axes['z']
+        ch_obj = constr.channels[channel_name]
+
+        sd = ScanData(
+            channels=[ch_obj],
+            scan_axes=[x_axis, z_axis],
+            scan_range=scan_range,
+            scan_resolution=scan_resolution,
+            scan_frequency=scan_frequency,
+            target_at_start=self.scanner_target,
+        )
+        sd.data = {channel_name: counts}
+        return sd
 
     def _make_stage_z_scan_data(self, channel_name, scan_range, scan_resolution, scan_frequency, counts):
         """Create a ScanData object matching the normal scan_widget expectations for a 1D z scan."""

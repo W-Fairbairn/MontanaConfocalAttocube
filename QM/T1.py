@@ -18,37 +18,16 @@ Next steps before going to the next node:
 from qm import QuantumMachinesManager
 from qm.qua import *
 from qm import SimulationConfig
-import matplotlib.pyplot as plt
 
 #from configuration import *
 from qualang_tools.loops import from_array
 from qualang_tools.results.data_handler import DataHandler
 import numpy as np
 from pathlib import Path
-import threading
-from multiprocessing.connection import Listener
-import sys
-import signal
 import time
 from scipy.optimize import curve_fit
-from PyQt6 import QtCore, QtWidgets, QtGui, uic
-from PyQt6.QtCore import QSettings
-from PyQt6.QtGui import QColor, QAction
-from PyQt6.QtWidgets import (
-    QApplication,
-    QDialog,
-    QDialogButtonBox,
-    QGroupBox,
-    QRadioButton,
-    QVBoxLayout,
-    QLabel,
-    QLineEdit,
-)
 from experiment_base import *
 from settings_dialog_base import SettingsDialogBase
-
-settings = QSettings("Diamond", "QM_T1")
-
 
 class SettingsDialogT1(SettingsDialogBase):
     SETTINGS_GROUP = "QM_T1"
@@ -58,12 +37,17 @@ class SettingsDialogT1(SettingsDialogBase):
         "time_max": {"label": "Time max (ns):", "default": 500, "type": int},
         "num_points": {"label": "Number of points:", "default": 50, "type": int},
         "num_averages": {"label": "Number of averages:", "default": 10_000_000, "type": int},
+        "odmr_if_freq_mhz": {"label": "ODMR IF frequency (MHz):", "default": 23.0, "type": float},
+        "rabi_freq_mhz": {"label": "Rabi frequency for π pulse (MHz):", "default": 7.65, "type": float},
+        "gain": {"label": "Octave RF gain (dB):", "default": -5, "type": int},
+        "mw_enabled": {"label": "Microwave on:", "default": True, "type": bool, "widget": "checkbox"},
     }
 
 
 class T1(ExperimentBase):
     def __init__(self):
-
+        super().__init__()
+        self.job = None
         self.conn = None
         self.qmm = None
         self.qm = None
@@ -71,11 +55,15 @@ class T1(ExperimentBase):
         #   Parameters   #
         ##################
         self.t_vec = None
+        self.mw = None
         self.length_run, self.num_points, self.n_avg = None, None, None
         self.is_running = False
         self.T1 = None
         self.time_tag_arr = []
         self.counts, self.counts_ref, self.iteration = None, None, None
+        self.counts_mw, self.counts_mw_ref = None, None
+        self.gain = None
+        self.original_rf_gain = None
         # Data to save
         self.save_data_dict = {
             "n_avg": self.n_avg,
@@ -90,9 +78,17 @@ class T1(ExperimentBase):
         self.length_run = int(s["time_max"])
         self.num_points = int(s["num_points"])
         self.n_avg = int(s["num_averages"])
+        odmr_if_freq_mhz = float(s["odmr_if_freq_mhz"])
+        rabi_freq_mhz = float(s["rabi_freq_mhz"])
+        self.gain = int(s["gain"])
 
-        self.t_vec = np.arange(400, self.length_run // 4, max(1, self.length_run // (4 * self.num_points)))
+        self.odmr_if_freq = odmr_if_freq_mhz * u.MHz  # noqa: F405
+        self.rabi_frequency_mhz = rabi_freq_mhz
+
+        self.t_vec = np.arange(40, self.length_run // 4, max(1, self.length_run // (4 * self.num_points)))
         time_arr_len = 1000
+
+        self._update_pulse_lengths_from_rabi_freq(self.rabi_frequency_mhz)
 
         import time as time_module
         print("1")
@@ -104,6 +100,12 @@ class T1(ExperimentBase):
         self.qm = self.qmm.open_qm(config, close_other_machines=True)
         print(f"3 (open_qm: {time_module.time() - t2:.2f}s)")
         t3 = time_module.time()
+        
+        # Store original gain and apply new gain setting
+        self.original_rf_gain = config["octaves"][octave]["RF_outputs"][1]["gain"]
+        config["octaves"][octave]["RF_outputs"][1]["gain"] = self.gain
+        
+        self.mw = bool(s["mw_enabled"])
 
         with program() as self.T1:
             counts = declare(int)  # saves number of photon counts
@@ -114,10 +116,15 @@ class T1(ExperimentBase):
             counts_st = declare_stream()  # stream for counts
             counts_ref_st = declare_stream()  # stream for reference counts
             n_st = declare_stream()  # stream to save iterations
+            counts_mw_st = declare_stream()
+            counts_mw_ref_st = declare_stream()
 
             t = declare(int)  # variable to sweep over delay
             n = declare(int)  # variable to sweep over iterations
             i = declare(int)  # variable to sweep over time tags
+
+            if self.mw:
+                update_frequency("NV", self.odmr_if_freq)
 
             with for_(n, 0, n < self.n_avg, n + 1):
                 with for_(*from_array(t, self.t_vec)):
@@ -130,20 +137,32 @@ class T1(ExperimentBase):
                     measure("readout", "SPCM1", time_tagging.analog(times_ref, meas_len_1, counts_ref))
                     save(counts_ref, counts_ref_st)  # save ref counts
 
+                    with if_(self.mw):
+                        align()
+                        play("x180" * amp(1), "NV")
+                        align()
+                        wait(t)                                      # wait the variable delay (in clock cycles)
+                        align()
+                        play("laser_ON", "AOM2")        # laser on for readout
+                        measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
+                        save(counts, counts_mw_st)
+                        measure("readout", "SPCM1", time_tagging.analog(times_ref, meas_len_1, counts_ref))
+                        save(counts_ref, counts_mw_ref_st)  # save ref counts
+
                     # noinspection PyTypeChecker
                     #with for_(i, 0, i < counts, i + 1):
                     #    save(times[i], times_st)  # cant directly save QUA vector, loop and save each element separately
 
-                with while_(IO1):  # refocusing loop
-                    play("laser_ON", "AOM2")  # laser on for optimise
-                    wait(wait_for_initialization * u.ns, "AOM2")
-                    align()
+                self.refocus_loop()
 
                 save(n, n_st)  # save number of iteration inside for_loop
 
             with stream_processing():
                 counts_st.buffer(len(self.t_vec)).average().save("counts")  # save average counts for each point in an array
                 counts_ref_st.buffer(len(self.t_vec)).average().save("counts_ref")
+                if self.mw:
+                    counts_mw_st.buffer(len(self.t_vec)).average().save("counts_mw")
+                    counts_mw_ref_st.buffer(len(self.t_vec)).average().save("counts_mw_ref")
                 #times_st.buffer(time_arr_len).save("time_tags")  # save time tags buffer size should be larger than counts expected
                 n_st.save("iteration")
 
@@ -154,39 +173,19 @@ class T1(ExperimentBase):
         print(f"4 (program compilation: {time_module.time() - t3:.2f}s)")
 
 
-    def receive_signal(self):
-        print("Thread: Sleeping until signal received...")
-        address = ("localhost", 6000)
-        listener = Listener(address, authkey=b"secret password")
-        print("connection accepted from", listener.last_accepted)
-        while True:
-            try:
-                self.conn = listener.accept()
-                msg = self.conn.recv()
-                print(msg)
-                if msg == "start":
-                    self.qm.set_io1_value(True)
-                    print("Paused")
-                elif msg == "stop":
-                    self.qm.set_io1_value(False)
-                    print("Resumed")
-                elif msg == "close":
-                    self.conn.close()
-                    break
-            except Exception as ex:
-                print(f"Error: {ex}")
-                break
-
-        listener.close()
-
-
-
     def get_x(self):
         return self.t_vec * 4 * 1e-9  # Convert to seconds
 
     def get_y(self):
         if self.counts is not None and self.counts_ref is not None:
-            return self.counts / self.counts_ref
+            if self.mw:
+                if self.counts_mw is not None and self.counts_mw_ref is not None:
+                    diff = self.counts / self.counts_ref - self.counts_mw / self.counts_mw_ref
+                    return diff / max(diff)
+                else:
+                    return np.zeros(len(self.t_vec))
+            else:
+                return self.counts / self.counts_ref
         else:
             return np.zeros(len(self.t_vec))
 
@@ -206,8 +205,12 @@ class T1(ExperimentBase):
         except Exception as e:
             print(f"Error halting the job: {e}")
         finally:
+            # Restore the original gain
+            if self.original_rf_gain is not None:
+                config["octaves"][octave]["RF_outputs"][1]["gain"] = self.original_rf_gain
             if self.conn:
                 self.conn.close()
+            self.close_signal_listener()
 
     def save_data(self):
         script_name = Path(__file__).name
@@ -217,8 +220,8 @@ class T1(ExperimentBase):
         self.save_data_dict.update({"iteration": np.array([int(self.iteration)])})
         #self.save_data_dict.update({"time_tag_arr": self.time_tag_arr})
         self.save_data_dict.update({"counts_ref": self.counts_ref})
-        #self.save_data_dict.update({"raw_counts": np.array(self.raw_counts)})
-        #self.save_data_dict.update({"raw_counts_ref": np.array(self.raw_counts_ref)})
+        self.save_data_dict.update({"counts_mw": np.array(self.counts_mw)})
+        self.save_data_dict.update({"counts_mw_ref": np.array(self.counts_mw_ref)})
         data_handler.save_data(data=self.save_data_dict, name=script_name.split(".")[0])
 
     def get_plot_info(self):
@@ -279,21 +282,31 @@ class T1(ExperimentBase):
             # Visualize and save the waveform report
             waveform_report.create_plot(samples, plot=True, save_path=str(Path(__file__).resolve()))
         else:
-            # Open quantum machine and execute program
-            self.qm.set_io1_value(False)  # Ensure IO1 is low at the start of the program (not paused)
-            self.job = self.qm.execute(self.T1)  # start the job
+            try:
+                # Open quantum machine and execute program
+                self.qm.set_io1_value(False)  # Ensure IO1 is low at the start of the program (not paused)
+                self.job = self.qm.execute(self.T1)  # start the job
 
-            results = fetching_tool(
-                self.job, data_list=["counts", "counts_ref", "iteration"], mode="live"
-            )
-            t2 = threading.Thread(target=self.receive_signal, daemon=True)  # Thread to receive pause/resume signals from external script
-            t2.start()
+                if self.mw:
+                    results = fetching_tool(
+                        self.job, data_list=["counts", "counts_ref", "iteration", "counts_mw", "counts_mw_ref"], mode="live"
+                    )
+                else:
+                    results = fetching_tool(
+                        self.job, data_list=["counts", "counts_ref", "iteration"], mode="live"
+                    )
+                self.start_signal_listener()
 
-            while results.is_processing():
-                try:
-                    # Fetch the latest data
-                    self.counts, self.counts_ref, self.iteration = results.fetch_all()
-                    time.sleep(0.1)  # Small delay to prevent excessive CPU usage
-                except Exception as e:
-                    print(f"Error fetching results: {e}")
-                    break
+                while results.is_processing():
+                    try:
+                        # Fetch the latest data
+                        if self.mw:
+                            self.counts, self.counts_ref, self.iteration, self.counts_mw, self.counts_mw_ref = results.fetch_all()
+                        else:
+                            self.counts, self.counts_ref, self.iteration = results.fetch_all()
+                        time.sleep(0.1)  # Small delay to prevent excessive CPU usage
+                    except Exception as e:
+                        print(f"Error fetching results: {e}")
+                        break
+            finally:
+                self.close_signal_listener()

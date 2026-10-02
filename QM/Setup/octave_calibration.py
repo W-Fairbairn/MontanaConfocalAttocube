@@ -3,7 +3,7 @@ This file is used to run the Octave automatic mixer calibration.
 """
 
 from qm import QuantumMachinesManager
-from configuration import *
+from MontanaConfocalAttocube.QM.configuration import *
 import numpy as np
 
 qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name, log_level="ERROR", octave_calibration_db_path=calibration_db_dir)

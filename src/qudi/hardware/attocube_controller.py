@@ -29,6 +29,9 @@ class AttocubeANC350(AttocubeStageInterface):
         self.log.debug("AttocubeANC350 deactivated.")
         return True
 
+    def set_voltage(self, voltage):
+        self.atc1.setAmplitude(1, voltage)
+
     def _reconnect(self):
         """Try to recover from a pyanc350 communication timeout by reconnecting."""
         try:

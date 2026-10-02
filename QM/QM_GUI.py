@@ -17,10 +17,9 @@ Next steps before going to the next node:
 """
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtWidgets, QtGui, uic
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QComboBox
-from PyQt6.QtGui import QColor, QAction
-from PyQt6.QtWidgets import QComboBox
-from PyQt6.QtCore import QSettings, Qt
+from PyQt6.QtCore import QSettings
+from PyQt6.QtGui import QAction
+from PyQt6.QtWidgets import QComboBox, QVBoxLayout
 import os
 import threading
 import numpy as np
@@ -30,8 +29,9 @@ from CW_ODMR_GUI import CW_ODMR, SettingsDialogODMR
 from Counter import Counter, SettingsDialogCounter
 from T1 import T1, SettingsDialogT1
 from Hahn_Echo import HahnEcho, SettingsDialogHahnEcho
+from xy8 import XY8, SettingsDialogXY8
 from experiment_base import ExperimentBase
-from styles import Colors, MAIN_WINDOW_STYLESHEET, PLOT_WIDGET_BG, get_textbox_palette, get_toolbar_palette
+from styles import MAIN_WINDOW_STYLESHEET, PLOT_WIDGET_BG, get_textbox_palette, get_toolbar_palette
 
 # Initialize QSettings for persistent storage
 settings = QSettings("Diamond", "QM_Experiment")
@@ -76,6 +76,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setWindowTitle('T1 Measurement')
         elif self.experiment == "HahnEcho":
             self.setWindowTitle('Hahn Echo (T2) Measurement')
+        elif self.experiment == "XY8":
+            self.setWindowTitle('XY8 Dynamical Decoupling (T2) Measurement')
         else:
             self.setWindowTitle('Quantum Measurement')
 
@@ -91,13 +93,14 @@ class MainGui(QtCore.QObject):
         self.running: bool = False
         self.program: ExperimentBase | None = None
         self.settings_dialog = None
-        self.experiments = ["Counter", "Rabi", "ODMR", "T1", "HahnEcho"]
+        self.experiments = ["Counter", "Rabi", "ODMR", "T1", "HahnEcho", "XY8"]
         self.classes = {
             "Counter": (Counter, SettingsDialogCounter),
             "Rabi": (Rabi, SettingsDialogRabi),
             "ODMR": (CW_ODMR, SettingsDialogODMR),
             "T1": (T1, SettingsDialogT1),
             "HahnEcho": (HahnEcho, SettingsDialogHahnEcho),
+            "XY8": (XY8, SettingsDialogXY8),
         }
         # Load the last selected experiment from persistent storage, default to "Rabi"
         self.current_experiment: str = settings.value("current_experiment", "Counter")

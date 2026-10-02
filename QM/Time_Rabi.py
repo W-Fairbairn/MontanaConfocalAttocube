@@ -19,7 +19,6 @@ import numpy as np
 from qm import QuantumMachinesManager
 from qm.qua import *
 from qm import SimulationConfig
-import matplotlib.pyplot as plt
 #from configuration import *
 from qualang_tools.results.data_handler import DataHandler
 import time
@@ -43,7 +42,7 @@ class SettingsDialogRabi(SettingsDialogBase):
 
 class Rabi(ExperimentBase):
     def __init__(self):
-
+        super().__init__()
         self.qmm = None
         self.qm = None
         self.job = None
@@ -156,6 +155,7 @@ class Rabi(ExperimentBase):
                     measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
                     save(counts, counts_ref_st)
                     wait(wait_between_runs * u.ns)
+                    self.refocus_loop()
 
                 save(n, n_st)  # save number of iteration inside for_loop
 
@@ -193,6 +193,7 @@ class Rabi(ExperimentBase):
         finally:
             # Ensure config/hardware are restored when stopping
             self.restore_config()
+            self.close_signal_listener()
 
     def save_data(self):
         # Save results
@@ -252,6 +253,7 @@ class Rabi(ExperimentBase):
         interp_x = np.linspace(min(x), max(x), 500)
         fit_y = self.fit_func(interp_x, *popt)
         text = f'T2 = {T2_fit / 1E-6:.2f} ± {T2_err / 1E-6:.2f} us,\nf = {f_fit / 1E6:.2f} ± {f_err / 1E6:.2f} MHz'
+        SettingsDialogRabi.set("rabi_freq_mhz", f_fit / 1E6)
         return [interp_x, fit_y, text]
 
     def start_program(self):
@@ -278,6 +280,7 @@ class Rabi(ExperimentBase):
                 self.is_running = True
                 self.job = self.qm.execute(self.time_rabi)
                 results = fetching_tool(self.job, data_list=["counts", "counts_ref", "iteration", "time_tags"], mode="live")
+                self.start_signal_listener()
                 while results.is_processing():
                     self.counts, self.counts_ref, self.iteration, self.time_tags = results.fetch_all()
                     # Add debug plots here if needed
@@ -290,3 +293,4 @@ class Rabi(ExperimentBase):
         finally:
             # Always restore original config/hardware settings
             self.restore_config()
+            self.close_signal_listener()

@@ -82,7 +82,7 @@ NV_LO_freq = 2.87 * u.GHz
 refocus_len = 30000 * u.ns
 # Pulses lengths
 initialization_len_1 = 3500 * u.ns
-meas_len_1 = 500 * u.ns
+meas_len_1 = 500//4*4 * u.ns
 long_meas_len_1 = 4000 * u.ns
 
 initialization_len_2 = 3500 * u.ns
@@ -129,7 +129,7 @@ trigger_buffer = 18  # 18ns with QOP222 and above otherwise 15ns
 #initialization_len_2 = 9000 * u.ns
 #long_meas_len_1 = 10000 * u.ns
 
-wait_between_runs = 1500 * u.ns
+wait_between_runs = 2000 * u.ns
 
 config = {
     "controllers": {

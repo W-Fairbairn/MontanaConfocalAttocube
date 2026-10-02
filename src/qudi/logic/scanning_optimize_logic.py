@@ -457,7 +457,7 @@ class ScanningOptimizeLogic(LogicBase):
         """
         # Keep old behavior (including start/stop messaging) but don't unlock the optimizer module.
         try:
-            self.z_optimize()
+            #self.z_optimize()
             try:
                 self.sigOptimizeStateChanged.emit(True, {'z': self.z_stage().get_position(1)}, None)
             except Exception:
@@ -476,18 +476,23 @@ class ScanningOptimizeLogic(LogicBase):
         counts = np.zeros(num)
         for i in range(num):
             counts[i] = self._time_tagger().get_counts()
+            time.sleep(0.001)
         return np.median(counts)
 
     def z_optimize(self):
         y_data = []
         optimised = False
         backward = True
-        num_averages = 200
+        num_averages = 10
         i = 0
         print("optimising z")
         while not optimised:
             i += 1
             print(backward)
+            if backward:
+                self._z_stage().set_voltage(60)
+            else:
+                self._z_stage().set_voltage(60)
             curr_counts = self.average_counts(num_averages)
             y_data.append(curr_counts)
             self._z_stage().step(backward)

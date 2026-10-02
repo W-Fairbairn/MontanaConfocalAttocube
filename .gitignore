@@ -14,6 +14,7 @@
 *.#*
 .*.swp
 .DS_store
+waveform_report*
 
 # Local config directories
 /*.egg-info
@@ -33,3 +34,5 @@
 *.log.*
 /QM/save_dir/
 /QM/Data/
+/QM/Old_test_scrips/
+/QM/simulation_reports/
