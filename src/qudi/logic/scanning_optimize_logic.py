@@ -459,14 +459,14 @@ class ScanningOptimizeLogic(LogicBase):
         try:
             #self.z_optimize()
             try:
-                self.sigOptimizeStateChanged.emit(True, {'z': self.z_stage().get_position(1)}, None)
+                self.sigOptimizeStateChanged.emit(True, {'z': self._z_stage().get_position('z')}, None)
             except Exception:
                 self.sigOptimizeStateChanged.emit(True, dict(), None)
         except Exception:
             self.log.exception('Z-stage optimization step failed.')
             # Emit a failed fit so the GUI can indicate invalid optimization.
             try:
-                self.sigOptimizeStateChanged.emit(True, {'z': self._z_stage().get_position(1)}, None)
+                self.sigOptimizeStateChanged.emit(True, {'z': self._z_stage().get_position('z')}, None)
             except Exception:
                 self.sigOptimizeStateChanged.emit(True, dict(), None)
             # Abort sequence on failure.
@@ -483,20 +483,21 @@ class ScanningOptimizeLogic(LogicBase):
         y_data = []
         optimised = False
         backward = True
-        num_averages = 10
+        num_averages = 3
         i = 0
+        num_steps = 1
         print("optimising z")
         while not optimised:
             i += 1
-            print(backward)
+            print(i, backward)
             if backward:
-                self._z_stage().set_voltage(60)
+                self._z_stage().set_voltage('z', 50)
             else:
-                self._z_stage().set_voltage(60)
+                self._z_stage().set_voltage('z', 50)
             curr_counts = self.average_counts(num_averages)
             y_data.append(curr_counts)
-            self._z_stage().step(backward)
-            time.sleep(0.25)
+            self._z_stage().step('z', backward)
+            time.sleep(0.05)
             if self.average_counts(num_averages) < curr_counts:
                 backward = not backward
 
@@ -505,35 +506,13 @@ class ScanningOptimizeLogic(LogicBase):
                 'x': np.array(x_data, dtype=float),
                 'y': np.array(y_data, dtype=float),
             })
-            if i > 20:
+            if i > 50:
                 optimised = True
         print("finished optimising z")
         return
 
     def run_z_stage_scan_0_3000um(self, step_um=10.0, times_to_avg=3, dwell_time_s=0.0,
                                  start_um=0.0, stop_um=3000.0, reverse=False):
-        """Run a simple Z scan by stepping the Attocube stage and reading counts.
-
-        This is intended to feed a 1D plot (z vs counts) in the scanning GUI.
-
-        Parameters
-        ----------
-        step_um : float
-            Step size in µm.
-        times_to_avg : int
-            Number of count samples per point (median is used).
-        dwell_time_s : float
-            Optional dwell time between count samples.
-        start_um, stop_um : float
-            Scan range in µm.
-        reverse : bool
-            If True, scan from stop->start.
-
-        Returns
-        -------
-        (np.ndarray, np.ndarray)
-            z positions in meters and counts.
-        """
         if times_to_avg < 1:
             times_to_avg = 1
         if step_um <= 0:
@@ -567,7 +546,7 @@ class ScanningOptimizeLogic(LogicBase):
 
     def z_stage_startup_procedure(self):
         # get settings and current parameters so that on startup the ui is updated with stage current position
-        curr_pos = self._z_stage().get_position(1)
+        curr_pos = self._z_stage().get_position('z')
         print("start up optimize logic", curr_pos)
         self.sigZStageStartup.emit(curr_pos)
         return

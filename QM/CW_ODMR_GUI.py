@@ -18,7 +18,6 @@ from qm import QuantumMachinesManager
 from qm.qua import *
 from qm import SimulationConfig
 
-from qualang_tools.results.data_handler import DataHandler
 from pathlib import Path
 import time
 import numpy as np
@@ -62,12 +61,6 @@ class CW_ODMR(ExperimentBase):
         self.readout_len = long_meas_len_1
         self.original_rf_gain = None
         self.cw_rf_gain_db = None
-        # Data to save
-        self.save_data_dict = {
-            "n_avg": self.n_avg,
-            "f_vec": self.f_vec,
-            "config": config,
-        }
 
     def _get_nv_lo_freq(self):
         return config["octaves"][octave]["RF_outputs"][1]["LO_frequency"]
@@ -157,14 +150,17 @@ class CW_ODMR(ExperimentBase):
                 self.conn.close()
             self.close_signal_listener()
 
-    def save_data(self):
-        # Save results
-        script_name = Path(__file__).name
-        data_handler = DataHandler(root_data_folder=save_dir)
-        self.save_data_dict.update({"counts_data": self.counts})
-        self.save_data_dict.update({"freq_data": self.f_vec})
-        # data_handler.additional_files = {script_name: script_name, **default_additional_files}
-        data_handler.save_data(data=self.save_data_dict, name=script_name.split(".")[0])
+    def get_save_name(self):
+        return "cw_odmr"
+
+    def get_save_data(self):
+        if self.f_vec is None or self.counts is None:
+            return {}
+        return {
+            "n_avg": self.n_avg,
+            "freq_data": self.f_vec,
+            "counts_data": self.counts,
+        }
 
     def get_plot_info(self):
         return {

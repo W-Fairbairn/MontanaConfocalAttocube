@@ -21,7 +21,6 @@ from qm import SimulationConfig
 
 #from configuration import *
 from qualang_tools.loops import from_array
-from qualang_tools.results.data_handler import DataHandler
 import numpy as np
 from pathlib import Path
 import time
@@ -64,12 +63,6 @@ class T1(ExperimentBase):
         self.counts_mw, self.counts_mw_ref = None, None
         self.gain = None
         self.original_rf_gain = None
-        # Data to save
-        self.save_data_dict = {
-            "n_avg": self.n_avg,
-            "t_vec": self.t_vec,
-            "config": config,
-        }
 
     def compile_program(self):
         self.time_tag_arr = []
@@ -90,21 +83,17 @@ class T1(ExperimentBase):
 
         self._update_pulse_lengths_from_rabi_freq(self.rabi_frequency_mhz)
 
-        import time as time_module
-        print("1")
-        t1 = time_module.time()
         self.qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name,
                                           octave_calibration_db_path=calibration_db_dir)
-        print(f"2 (QuantumMachinesManager: {time_module.time() - t1:.2f}s)")
-        t2 = time_module.time()
-        self.qm = self.qmm.open_qm(config, close_other_machines=True)
-        print(f"3 (open_qm: {time_module.time() - t2:.2f}s)")
-        t3 = time_module.time()
-        
-        # Store original gain and apply new gain setting
+        self.enable_calibration_db_caching()
+
+        # Apply gain before open_qm so this run's open_qm/calibration lookup and
+        # Octave provisioning use the intended gain.
         self.original_rf_gain = config["octaves"][octave]["RF_outputs"][1]["gain"]
         config["octaves"][octave]["RF_outputs"][1]["gain"] = self.gain
-        
+
+        self.qm = self.qmm.open_qm(config, close_other_machines=True)
+
         self.mw = bool(s["mw_enabled"])
 
         with program() as self.T1:
@@ -128,6 +117,7 @@ class T1(ExperimentBase):
 
             with for_(n, 0, n < self.n_avg, n + 1):
                 with for_(*from_array(t, self.t_vec)):
+                    play("laser_ON", "AOM2")
                     align()
                     wait(t)                                      # wait the variable delay (in clock cycles)
                     align()
@@ -170,7 +160,6 @@ class T1(ExperimentBase):
                 # if iterations and point count are too large may exceed memory limit (100E6 int)
                 #counts_st.buffer(len(self.t_vec)).save_all("raw_counts")
                 #counts_ref_st.buffer(len(self.t_vec)).save_all("raw_counts_ref")
-        print(f"4 (program compilation: {time_module.time() - t3:.2f}s)")
 
 
     def get_x(self):
@@ -212,17 +201,22 @@ class T1(ExperimentBase):
                 self.conn.close()
             self.close_signal_listener()
 
-    def save_data(self):
-        script_name = Path(__file__).name
-        data_handler = DataHandler(root_data_folder='C:/Users/attocube/Documents/MontanaQudiAttocube/MontanaConfocalAttocube/QM/save_dir')
-        self.save_data_dict.update({"counts_data": self.counts})
-        self.save_data_dict.update({"t_vec": self.t_vec})
-        self.save_data_dict.update({"iteration": np.array([int(self.iteration)])})
-        #self.save_data_dict.update({"time_tag_arr": self.time_tag_arr})
-        self.save_data_dict.update({"counts_ref": self.counts_ref})
-        self.save_data_dict.update({"counts_mw": np.array(self.counts_mw)})
-        self.save_data_dict.update({"counts_mw_ref": np.array(self.counts_mw_ref)})
-        data_handler.save_data(data=self.save_data_dict, name=script_name.split(".")[0])
+    def get_save_name(self):
+        return "t1"
+
+    def get_save_data(self):
+        if self.t_vec is None or self.counts is None or self.counts_ref is None:
+            return {}
+        return {
+            "n_avg": self.n_avg,
+            "t_vec": self.t_vec,
+            "counts_data": self.counts,
+            "counts_ref": self.counts_ref,
+            "iteration": np.array([int(self.iteration)]) if self.iteration is not None else None,
+            "mw": bool(self.mw),
+            "counts_mw": self.counts_mw if self.mw else None,
+            "counts_mw_ref": self.counts_mw_ref if self.mw else None,
+        }
 
     def get_plot_info(self):
         return {

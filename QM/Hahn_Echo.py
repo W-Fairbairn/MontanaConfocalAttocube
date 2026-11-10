@@ -24,7 +24,6 @@ import numpy as np
 from qm import QuantumMachinesManager, SimulationConfig
 from qm.qua import *
 from qualang_tools.loops import from_array
-from qualang_tools.results.data_handler import DataHandler
 from scipy.optimize import curve_fit
 
 #from configuration import *  # noqa: F403
@@ -95,8 +94,6 @@ class HahnEcho(ExperimentBase):
         self.counts2_ref = None
         self.iteration = None
 
-        self.save_data_dict = {"n_avg": None, "t_vec": None, "config": config}
-
     def restore_config(self):
         if self.original_output_mode is not None:
             config["octaves"][octave]["RF_outputs"][1]["output_mode"] = self.original_output_mode
@@ -134,8 +131,6 @@ class HahnEcho(ExperimentBase):
             4, self.length_run // 4, max(1, self.length_run // (4 * self.num_points))
         )
 
-        self.save_data_dict = {"n_avg": self.n_avg, "t_vec": self.t_vec, "config": config}
-
         self.qmm = QuantumMachinesManager(
             host=qop_ip, cluster_name=cluster_name, octave_calibration_db_path=calibration_db_dir
         )
@@ -170,11 +165,10 @@ class HahnEcho(ExperimentBase):
                     # Sequence 1: x90 - τ - x180 - τ - x90
                     align()
                     play("x90" * amp(1), "NV")
-                    wait(t)
+                    play("gap", "NV", duration=t)
                     play("x180" * amp(1), "NV")
-                    wait(t)
+                    play("gap", "NV", duration=t)
                     play("x90" * amp(1), "NV")
-
                     align()
                     play("laser_ON", "AOM2")
                     measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
@@ -186,11 +180,10 @@ class HahnEcho(ExperimentBase):
                     # Sequence 2: x90 - τ - x180 - τ - -x90
                     align()
                     play("x90" * amp(1), "NV")
-                    wait(t)
+                    play("gap", "NV", duration=t)
                     play("x180" * amp(1), "NV")
-                    wait(t)
+                    play("gap", "NV", duration=t)
                     play("-x90" * amp(1), "NV")
-
                     align()
                     play("laser_ON", "AOM2")
                     measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
@@ -216,8 +209,20 @@ class HahnEcho(ExperimentBase):
         try:
             simulate = False
             if simulate:
-                simulation_config = SimulationConfig(duration=10_000)
-                _job = self.qmm.simulate(config, self.hahn_echo, simulation_config)
+                # Simulates the QUA program for the specified duration
+                simulation_config = SimulationConfig(duration=10_000)  # In clock cycles = 4ns
+                # Simulate blocks python until the simulation is done
+                job = self.qmm.simulate(config, self.hahn_echo, simulation_config)
+                # Get the simulated samples
+                samples = job.get_simulated_samples()
+                # Plot the simulated samples
+                samples.con1.plot()
+                # Get the waveform report object
+                waveform_report = job.get_simulated_waveform_report()
+                # Cast the waveform report to a python dictionary
+                waveform_dict = waveform_report.to_dict()
+                # Visualize and save the waveform report
+                waveform_report.create_plot(samples, plot=True, save_path=str(Path(__file__).resolve()))
                 return
 
             self.is_running = True
@@ -280,34 +285,43 @@ class HahnEcho(ExperimentBase):
         diff = np.nan_to_num(diff, nan=0.0, posinf=0.0, neginf=0.0)
         return diff
 
-    def save_data(self):
-        if self.t_vec is None:
-            return
+    def get_err(self):
+        if self.counts1 is not None and self.counts1_ref is not None and self.iteration is not None and self.counts2 is not None and self.counts2_ref is not None:
+            count1_err = np.sqrt(self.counts1 * self.iteration) / self.iteration
+            ref1_err = np.sqrt(self.counts1_ref * self.iteration) / self.iteration
+            norm1_err = (self.counts1 / self.counts1_ref) * np.sqrt((count1_err / self.counts1) ** 2 + (ref1_err / self.counts1_ref) ** 2)
 
-        script_name = Path(__file__).name
-        data_handler = DataHandler(root_data_folder=save_dir)
+            count2_err = np.sqrt(self.counts2 * self.iteration) / self.iteration
+            ref2_err = np.sqrt(self.counts2_ref * self.iteration) / self.iteration
+            norm2_err = (self.counts2 / self.counts2_ref) * np.sqrt((count2_err / self.counts2) ** 2 + (ref2_err / self.counts2_ref) ** 2)
+
+            return np.sqrt(norm1_err**2 + norm2_err**2)
+        else:
+            return None
+
+    def get_save_name(self):
+        return "hahn_echo"
+
+    def get_save_data(self):
+        if self.t_vec is None:
+            return {}
 
         n1 = self._safe_norm(self.counts1, self.counts1_ref)
         n2 = self._safe_norm(self.counts2, self.counts2_ref)
-        diff = None
-        if n1 is not None and n2 is not None:
-            diff = n1 - n2
+        diff = (n1 - n2) if (n1 is not None and n2 is not None) else None
 
-        self.save_data_dict.update(
-            {
-                "counts1_data": self.counts1,
-                "counts1_ref_data": self.counts1_ref,
-                "normalized1_data": n1,
-                "counts2_data": self.counts2,
-                "counts2_ref_data": self.counts2_ref,
-                "normalized2_data": n2,
-                "diff_data": diff,
-                "iteration": np.array([int(self.iteration)]) if self.iteration is not None else None,
-            }
-        )
-
-        data_handler.additional_files = {script_name: script_name, **default_additional_files}
-        data_handler.save_data(data=self.save_data_dict, name="hahn_echo")
+        return {
+            "n_avg": self.n_avg,
+            "t_vec": self.t_vec,
+            "counts1_data": self.counts1,
+            "counts1_ref_data": self.counts1_ref,
+            "normalized1_data": n1,
+            "counts2_data": self.counts2,
+            "counts2_ref_data": self.counts2_ref,
+            "normalized2_data": n2,
+            "diff_data": diff,
+            "iteration": np.array([int(self.iteration)]) if self.iteration is not None else None,
+        }
 
     def get_plot_info(self):
         return {
@@ -410,8 +424,12 @@ class HahnEcho(ExperimentBase):
             x_fit = np.linspace(float(np.min(x_arr)), float(np.max(x_arr)), 500)
             y_fit = self._t2_decay(x_fit, *popt)
 
-            # Display in µs (x is ns)
-            text = f"T2 = {T2_fit / 1000:.0f} ± {T2_err / 1000:.0f} µs"
+            units = ["ns", "µs", "ms", "s"]
+            i = 0
+            while T2_fit > 1000 and i < len(units) - 1:
+                T2_err /= 1000
+                i += 1
+            text = f"T2 = {T2_fit:.1f} ± {T2_err:.1f} {units[i]}"
             return x_fit, y_fit, text
         except Exception as e:
             return np.array([]), np.array([]), f"Fit failed: {e}"

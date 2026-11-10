@@ -314,7 +314,7 @@ class ScanningProbeLogic(LogicBase):
                         z = self._stage_z_hard_max
                     # also clip against stage-reported range if available
                     try:
-                        z_min, z_max = self._z_stage().z_stage_range
+                        z_min, z_max = self._z_stage().get_range('z')
                         z = max(float(z_min), min(float(z_max), z))
                     except Exception:
                         pass
@@ -622,7 +622,7 @@ class ScanningProbeLogic(LogicBase):
                     break
 
                 try:
-                    self._z_stage().move_absolute(float(z))
+                    self._z_stage().move_absolute('z', float(z))
                     stage_failures = 0
                 except Exception:
                     stage_failures += 1
@@ -631,8 +631,7 @@ class ScanningProbeLogic(LogicBase):
                     if stage_failures >= 2:
                         self.__scan_stop_requested = True
                         try:
-                            if hasattr(self._z_stage(), 'stop'):
-                                self._z_stage().stop()
+                            self._z_stage().stop('z')
                         except Exception:
                             pass
                         break
@@ -746,7 +745,7 @@ class ScanningProbeLogic(LogicBase):
                     break
 
                 try:
-                    self._z_stage().move_absolute(float(z))
+                    self._z_stage().move_absolute('z', float(z))
                     stage_failures = 0
                 except Exception:
                     stage_failures += 1
@@ -755,8 +754,7 @@ class ScanningProbeLogic(LogicBase):
                     if stage_failures >= 2:
                         self.__scan_stop_requested = True
                         try:
-                            if hasattr(self._z_stage(), 'stop'):
-                                self._z_stage().stop()
+                            self._z_stage().stop('z')
                         except Exception:
                             pass
                         break

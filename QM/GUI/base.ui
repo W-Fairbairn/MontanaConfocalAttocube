@@ -105,13 +105,13 @@ p, li { white-space: pre-wrap; }
    <attribute name="toolBarBreak">
     <bool>false</bool>
    </attribute>
-   <addaction name="run_rabi_Action"/>
-   <addaction name="fit_rabi_Action"/>
-   <addaction name="save_rabi_Action"/>
+   <addaction name="run_Action"/>
+   <addaction name="fit_Action"/>
+   <addaction name="save_Action"/>
    <addaction name="settings_Action"/>
    <addaction name="separator"/>
   </widget>
-  <action name="run_rabi_Action">
+  <action name="run_Action">
    <property name="checkable">
     <bool>true</bool>
    </property>
@@ -130,7 +130,7 @@ p, li { white-space: pre-wrap; }
     <string>Start a measurement</string>
    </property>
   </action>
-  <action name="save_rabi_Action">
+  <action name="save_Action">
    <property name="icon">
     <iconset>
      <normaloff>assets/document-save.svg</normaloff>assets/document-save.svg</iconset>
@@ -145,7 +145,7 @@ p, li { white-space: pre-wrap; }
     <string>Save measurement to file</string>
    </property>
   </action>
-  <action name="fit_rabi_Action">
+  <action name="fit_Action">
    <property name="icon">
     <iconset>
      <normaloff>assets/graph.svg</normaloff>assets/graph.svg</iconset>

@@ -6,13 +6,14 @@ from scipy.fft import fft
 
 #from MontanaConfocalAttocube.QM.configuration import save_dir
 
-f = np.load(save_dir / "2026-09-28/#1433_T1_100959/arrays.npz")
+f = np.load(save_dir / "2026-10-22/#1491_T1_150525/arrays.npz")
 t_vec = f["t_vec"]
 counts = f["counts_data"]
 x = 4 * t_vec / 1000000  # Convert to ms
 norm = counts / f["counts_ref"]
 iteration = f["iteration"][0]
 counts_ref = f["counts_ref"]
+print(iteration)
 
 try:
     counts_mw = f["counts_mw"]
@@ -44,7 +45,7 @@ y = norm
 err = norm_err
 x = x
 def decay_func(t, A, T1, C):
-    return 0.2 * np.exp(-t / T1) + 0.85
+    return A * np.exp(-t / T1) + C
 
 def multi_exp_decay_func(t, A1, T1_1, A2, T1_2, C):
     return A1 * np.exp(-t / T1_1) + A2 * np.exp(-t / T1_2) + C

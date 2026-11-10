@@ -20,7 +20,6 @@ from qm import QuantumMachinesManager
 from qm.qua import *
 from qm import SimulationConfig
 #from configuration import *
-from qualang_tools.results.data_handler import DataHandler
 import time
 from scipy.optimize import curve_fit
 from experiment_base import *
@@ -60,13 +59,6 @@ class Rabi(ExperimentBase):
         self.original_rf_gain = None
         self.original_output_mode = None
         self.counts, self.counts_ref, self.iteration, self.time_tags = None, None, None, None
-
-        # Data to save
-        self.save_data_dict = {
-            "n_avg": self.n_avg,
-            "t_vec": self.t_vec,
-            "config": config,
-        }
 
     def restore_config(self):
         """Restore the original RF output settings from before compilation."""
@@ -195,15 +187,20 @@ class Rabi(ExperimentBase):
             self.restore_config()
             self.close_signal_listener()
 
-    def save_data(self):
-        # Save results
-        script_name = Path(__file__).name
-        data_handler = DataHandler(root_data_folder=save_dir)
-        self.save_data_dict.update({"counts_data": self.counts})
-        self.save_data_dict.update({"counts_dark_data": self.counts_ref})
-        self.save_data_dict.update({"normalized_data": self.counts / self.counts_ref})
-        self.save_data_dict.update({"iteration": np.array([int(self.iteration)])})
-        data_handler.save_data(data=self.save_data_dict, name="_".join(script_name.split("_")[1:]).split(".")[0])
+    def get_save_name(self):
+        return "time_rabi"
+
+    def get_save_data(self):
+        if self.t_vec is None or self.counts is None or self.counts_ref is None:
+            return {}
+        return {
+            "n_avg": self.n_avg,
+            "t_vec": self.t_vec,
+            "counts_data": self.counts,
+            "counts_dark_data": self.counts_ref,
+            "normalized_data": self.counts / self.counts_ref,
+            "iteration": np.array([int(self.iteration)]) if self.iteration is not None else None,
+        }
 
     def get_plot_info(self):
         return {

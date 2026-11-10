@@ -42,9 +42,9 @@ class MainWindow(QtWidgets.QMainWindow):
     rabi_plot_PlotWidget: pg.PlotWidget
     fit_results_Text: QtWidgets.QPlainTextEdit
     counting_control_ToolBar: QtWidgets.QToolBar
-    run_rabi_Action: QAction
-    fit_rabi_Action: QAction
-    save_rabi_Action: QAction
+    run_Action: QAction
+    fit_Action: QAction
+    save_Action: QAction
     settings_Action: QAction
 
     def __init__(self, gui_ref=None, experiment="Rabi"):
@@ -132,14 +132,22 @@ class MainGui(QtCore.QObject):
         self._mw.counting_control_ToolBar.addAction(self.clear_fit_button)
         self._mw.counting_control_ToolBar.addSeparator()
 
+        self.pause_Action = QtGui.QAction("    Pause    ")
+        self.pause_Action.setCheckable(True)
+        self.pause_Action.setIcon(QtGui.QIcon(os.path.join(os.path.dirname(__file__), 'GUI/assets/pause.webp')))
+        self.pause_Action.toggled.connect(self.pause_toggled)
+        self._mw.counting_control_ToolBar.addAction(self.pause_Action)
+
+        self._mw.counting_control_ToolBar.addSeparator()
+        self.error_bars_CheckBox = QtWidgets.QCheckBox("Error bars")
+        self.error_bars_CheckBox.toggled.connect(self.error_bars_toggled)
+        self._mw.counting_control_ToolBar.addWidget(self.error_bars_CheckBox)
+
         # Add the experiment selector to the toolbar
         spacer = QtWidgets.QWidget()
         spacer.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
         self._mw.counting_control_ToolBar.addSeparator()
         self._mw.counting_control_ToolBar.addWidget(spacer)
-
-        # Add a button to clear the current fit
-
 
         container = QtWidgets.QWidget()
         layout = QVBoxLayout(container)
@@ -163,9 +171,13 @@ class MainGui(QtCore.QObject):
                                          np.array([]),
                                          pen=pg.mkPen(palette.c2, width=3))
 
+        self.error_bars = pg.ErrorBarItem(pen=pg.mkPen(palette.c1, width=1))
+        self.show_error_bars = False
+
         # Add the display item to the ViewWidget, which was defined in the UI file.
         self._mw.rabi_plot_PlotWidget.addItem(self.image)
         self._mw.rabi_plot_PlotWidget.addItem(self.fit_image)
+        self._mw.rabi_plot_PlotWidget.addItem(self.error_bars)
 
         self._mw.rabi_plot_PlotWidget.setLabel(axis='left', text='Normalised Signal', units='normalised units')
         self._mw.rabi_plot_PlotWidget.setLabel(axis='bottom', text='Time', units='ns')
@@ -184,9 +196,9 @@ class MainGui(QtCore.QObject):
         # Style the toolbar to match the plot widget color scheme
         self._mw.counting_control_ToolBar.setPalette(get_toolbar_palette())
 
-        self._mw.run_rabi_Action.toggled.connect(self.run_toggled)  # type: ignore
-        self._mw.fit_rabi_Action.triggered.connect(self.fit_clicked)  # type: ignore
-        self._mw.save_rabi_Action.triggered.connect(self.save_clicked)  # type: ignore
+        self._mw.run_Action.toggled.connect(self.run_toggled)  # type: ignore
+        self._mw.fit_Action.triggered.connect(self.fit_clicked)  # type: ignore
+        self._mw.save_Action.triggered.connect(self.save_clicked)  # type: ignore
         self._mw.settings_Action.triggered.connect(self.settings_clicked)  # type: ignore
 
         # Initialize QTimer for plot updates
@@ -198,7 +210,7 @@ class MainGui(QtCore.QObject):
         self.init_program()
 
         # Connect the fit action to toggle continuous fitting
-        self._mw.fit_rabi_Action.setCheckable(False)
+        self._mw.fit_Action.setCheckable(False)
         #self._mw.fit_rabi_Action.triggered.connect(self.fit_clicked)
 
 
@@ -280,6 +292,7 @@ class MainGui(QtCore.QObject):
         fit_text = data.get("fit_text", "")
 
         self.image.setData(x_data, y_data)
+        self.refresh_error_bars()
 
         # Only set fit data if it exists
         if len(x_fit) > 0 and len(y_fit) > 0:
@@ -318,6 +331,28 @@ class MainGui(QtCore.QObject):
             # Stop the timer
             self.plot_timer.stop()
             self.program.stop_program()
+
+    def pause_toggled(self):
+        self.program.toggle_scan()
+
+    def error_bars_toggled(self, checked):
+        self.show_error_bars = checked
+        self.refresh_error_bars()
+
+    def refresh_error_bars(self):
+        """Update the error bar item from the program's get_err(), if available."""
+        x_data = self.image.xData
+        y_data = self.image.yData
+        get_err = getattr(self.program, "get_err", None) if self.program is not None else None
+
+        if self.show_error_bars and get_err is not None and x_data is not None and y_data is not None and len(x_data) > 0:
+            err = get_err()
+            if err is not None and len(err) == len(x_data):
+                beam = (np.max(x_data) - np.min(x_data)) * 0.01 if len(x_data) > 1 else 0
+                self.error_bars.setData(x=x_data, y=y_data, height=2 * np.asarray(err), beam=beam)
+                return
+
+        self.error_bars.setData(x=None, y=None, height=None)
 
     def fit_clicked(self):
         """Fit the data - for Counter, rolling average is automatic; for others, perform fitting"""
@@ -371,6 +406,7 @@ class MainGui(QtCore.QObject):
                 y_data = self.program.get_y()
                 if x_data is not None and y_data is not None:
                     self.image.setData(x_data, y_data)
+                    self.refresh_error_bars()
 
                     # For Counter experiment, also update the rolling average fit line and statistics
                     if self.current_experiment == "Counter":

@@ -48,10 +48,6 @@ calibration_db_dir = Path(__file__).resolve().parent
 save_dir = Path(__file__).parent.resolve() / "save_dir"
 save_dir.mkdir(exist_ok=True)
 
-default_additional_files = {
-    Path(__file__).name: Path(__file__).name,
-    "optimal_weights.npz": "optimal_weights.npz",
-}
 
 
 # Set octave_config to None if no octave is present
@@ -208,6 +204,7 @@ config = {
             "intermediate_frequency": NV_IF_freq,
             "operations": {
                 "cw": "const_pulse",
+                "gap": "gap_pulse",
                 "x180": "x180_pulse",
                 "x90": "x90_pulse",
                 "-x90": "-x90_pulse",
@@ -298,6 +295,12 @@ config = {
         },
     },
     "pulses": {
+        "gap_pulse": {
+            "operation": "control",
+            "length": 16,  # placeholder default; actual length set via duration=t
+            "waveforms": {"I": "zero_wf", "Q": "zero_wf"},
+            "digital_marker": "ON",
+        },
         "const_pulse": {
             "operation": "control",
             "length": mw_len_NV,

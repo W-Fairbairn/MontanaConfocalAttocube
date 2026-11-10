@@ -43,12 +43,10 @@ class Counter(ExperimentBase):
         self.rolling_avg_data = []
 
     def compile_program(self):
-        print("1")
         self.qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name,
                                           octave_calibration_db_path=calibration_db_dir)
-        print("2")
+        self.enable_calibration_db_caching()
         self.qm = self.qmm.open_qm(config, close_other_machines=True)
-        print("3")
 
         n_count = 3000
         meas_len = meas_len_1
@@ -100,8 +98,11 @@ class Counter(ExperimentBase):
             self.close_signal_listener()
     simulate = False
 
-    def save_data(self):
-        pass
+    def get_save_name(self):
+        return "counter"
+
+    def get_save_data(self):
+        return {}
 
     def fit(self) -> tuple:
         """Return rolling average as the fitted curve for Counter with statistics"""
@@ -167,19 +168,24 @@ class Counter(ExperimentBase):
             last_idx = 0
 
             while res_handles.is_processing() and self.is_running:
-                new_idx = counts_handle.count_so_far()
-                new_counts = counts_handle.fetch(slice(last_idx, new_idx))
-                last_idx = new_idx
+                total = counts_handle.count_so_far()
+                if total > last_idx:
+                    data = counts_handle.fetch(slice(last_idx +1, total))
 
-                self.time_data.extend(new_counts["timestamp"] / 1E9)  # Convert timestamps to seconds
-                self.counts_data.extend(new_counts["value"] / (meas_len_1*1E-9*3000)) # Convert counts to kcps
+                    times = np.sort(data["timestamp"] / 1e9)
+                    values = data["value"][np.argsort(data["timestamp"])]
 
-                # Limit data points displayed
-                if len(self.time_data) > points:
-                    self.counts_data = self.counts_data[-points:]
-                    self.time_data = self.time_data[-points:]
+                    self.time_data.extend(times.tolist())
+                    self.counts_data.extend(values / (meas_len_1*1E-9*3000))
 
-                # Calculate rolling average
-                self.rolling_avg_data = [sum(self.counts_data[max(0, i-9):i+1]) / min(10, i+1) for i in range(len(self.counts_data))]
+                    # Limit data points displayed
+                    if len(self.time_data) > points:
+                        self.counts_data = self.counts_data[-points:]
+                        self.time_data = self.time_data[-points:]
 
-                time.sleep(0.01)  # Small delay to prevent blocking
+                    # Calculate rolling average
+                    self.rolling_avg_data = [sum(self.counts_data[max(0, i-9):i+1]) / min(10, i+1) for i in range(len(self.counts_data))]
+
+                    time.sleep(0.01)  # Small delay to prevent blocking
+
+                    last_idx = total

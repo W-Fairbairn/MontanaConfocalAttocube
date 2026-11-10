@@ -2,9 +2,11 @@
        XY8 MEASUREMENT (tau sweep)
 The program consists in playing two XY8-N sequences successively (first ending with x90 and then with -x90)
 and measure the photon counts received by the SPCM across varying idle times between pi-pulses.
-The values `tau_vec` are the times between pi-pulse centers. From this the pulse spacings are calculated by
-subtracting the duration of the pi-pulse. The same is done for the half-spacing before/after the pi/2-pulses,
-assuming the pi/2-pulse has half the length of the pi-pulse.
+The swept setting is the total evolution time of the sequence, T = 8 * xy8_order * tau, which is divided
+by 8 * xy8_order to get `tau_vec`, the times between pi-pulse centers. From this the pulse spacings are
+calculated by subtracting the duration of the pi-pulse. The same is done for the half-spacing before/after
+the pi/2-pulses, assuming the pi/2-pulse has half the length of the pi-pulse. Points where this would make
+the gap shorter than the minimum pulse duration (16 ns) are dropped.
 
 The data is then post-processed to determine the coherence time T2 associated with the XY8-N tau sweep.
 
@@ -24,12 +26,10 @@ Next steps before going to the next node:
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 import numpy as np
 from qm import QuantumMachinesManager, SimulationConfig
 from qm.qua import *
-from qualang_tools.results.data_handler import DataHandler
 from scipy.optimize import curve_fit
 
 from experiment_base import *
@@ -59,7 +59,7 @@ class SettingsDialogXY8(SettingsDialogBase):
     WINDOW_TITLE = "XY8 Settings"
 
     SETTINGS_SCHEMA = {
-        "time_max": {"label": "Tau max (ns, pulse-center spacing):", "default": 4000, "type": int},
+        "time_max": {"label": "Total evolution time max (ns):", "default": 1_000_000, "type": int},
         "num_points": {"label": "Number of points:", "default": 24, "type": int},
         "xy8_order": {"label": "XY8 order n:", "default": 4, "type": int},
         "num_averages": {"label": "Number of averages:", "default": 1_000_000, "type": int},
@@ -104,8 +104,6 @@ class XY8(ExperimentBase):
         self.counts2_ref = None
         self.iteration = None
 
-        self.save_data_dict = {"n_avg": None, "t_vec": None, "xy8_order": None, "config": config}
-
     def restore_config(self):
         if self.original_output_mode is not None:
             config["octaves"][octave]["RF_outputs"][1]["output_mode"] = self.original_output_mode
@@ -122,35 +120,38 @@ class XY8(ExperimentBase):
     def _xy8_block(tau):
         """A single XY8 block: X - Y - X - Y - Y - X - Y - X, interspersed with waits of `tau`."""
         play("x180", "NV")  # 1 X
-        wait(tau, "NV")
+        play("gap", "NV", duration=tau)
 
         play("y180", "NV")  # 2 Y
-        wait(tau, "NV")
+        play("gap", "NV", duration=tau)
 
         play("x180", "NV")  # 3 X
-        wait(tau, "NV")
+        play("gap", "NV", duration=tau)
 
         play("y180", "NV")  # 4 Y
-        wait(tau, "NV")
+        play("gap", "NV", duration=tau)
 
         play("y180", "NV")  # 5 Y
-        wait(tau, "NV")
+        play("gap", "NV", duration=tau)
 
         play("x180", "NV")  # 6 X
-        wait(tau, "NV")
+        play("gap", "NV", duration=tau)
 
         play("y180", "NV")  # 7 Y
-        wait(tau, "NV")
+        play("gap", "NV", duration=tau)
 
         play("x180", "NV")  # 8 X
 
-    def _xy8_n(self, tau, order, i):
-        """Full XY8-N sequence. The first block is outside the loop to avoid the extra
-        delay caused by two consecutive wait commands."""
+    def _xy8_n(self, tau, order, rep_counter):
         self._xy8_block(tau)
-        with for_(i, 1, i <= order - 1, i + 1):
-            wait(tau, "NV")
-            self._xy8_block(tau)
+        if order == 1:
+            return
+        if order >= 3:
+            with for_(rep_counter, 0, rep_counter < order - 2, rep_counter + 1):
+                play("gap", "NV", duration=tau)
+                self._xy8_block(tau)
+        play("gap", "NV", duration=tau)
+        self._xy8_block(tau)
 
     def compile_program(self):
         s = SettingsDialogXY8.get_settings()
@@ -175,28 +176,29 @@ class XY8(ExperimentBase):
         self._update_pulse_lengths_from_rabi_freq(self.rabi_frequency_mhz)
         # y180 is a separate pulse entry in the config; keep it in sync with x180 since XY8 uses both.
         config["pulses"]["y180_pulse"]["length"] = config["pulses"]["x180_pulse"]["length"]
-
-        # Cast to int: _update_pulse_lengths_from_rabi_freq computes these with plain float
-        # arithmetic, so the config values can come back as floats (e.g. 64.0). Subtracting a
-        # float from the int tau_vec array would silently upcast it to float64, which then makes
-        # for_each_ declare a QUA `fixed` array instead of `int` -- and fixed numbers are only
-        # representable in [-8, 8), so any real spacing value overflows it at compile time.
         x180_len = int(config["pulses"]["x180_pulse"]["length"])
         x90_len = int(config["pulses"]["x90_pulse"]["length"])
 
         # tau_vec: times between pi-pulse centers, in clock cycles (4 ns). Each value must be a
         # multiple of 2 clock cycles to ensure that the half-spacing is a multiple of a clock cycle.
+        # `self.time_max` is the total evolution time (ns) of the full XY8-N sequence:
+        # T = 8 * xy8_order * tau, so it's divided across the 8*xy8_order inter-pulse
+        # intervals to get the max tau to sweep.
+        n_tau_intervals = 8 * self.xy8_order
         tau_min_cc = 12
-        tau_max_cc = max(tau_min_cc + 2, self.time_max // 8)
+        tau_max_cc = max(tau_min_cc + 2, self.time_max // (2 * 4 * n_tau_intervals))
         step_cc = max(1, (tau_max_cc - tau_min_cc) // self.num_points)
         self.tau_vec = 2 * np.arange(tau_min_cc, tau_max_cc, step_cc)
 
         tau_vec_spacing = self.tau_vec - x180_len // 4  # interpulse spacing: end of pulse to start of next
         tau_half_vec_spacing = self.tau_vec // 2 - x90_len // 4  # spacing around the pi/2 pulses
 
-        # Remove any tau values whose interpulse spacing would be too short to play.
+        # Remove any tau values whose interpulse spacing (full or half) would be shorter than
+        # the minimum pulse/wait duration of 4 clock cycles (16 ns). Small total evolution
+        # times divided across many XY8 intervals can otherwise push tau below this limit.
+        min_gap_cc = 4
         for ii in reversed(range(len(self.tau_vec))):
-            if tau_half_vec_spacing[ii] < 4:
+            if tau_half_vec_spacing[ii] < min_gap_cc or tau_vec_spacing[ii] < min_gap_cc:
                 tau_half_vec_spacing = np.delete(tau_half_vec_spacing, ii)
                 tau_vec_spacing = np.delete(tau_vec_spacing, ii)
                 self.tau_vec = np.delete(self.tau_vec, ii)
@@ -207,13 +209,6 @@ class XY8(ExperimentBase):
         # Determine whether there's room for a second (reference) readout within the same laser pulse.
         self.reference_wait = initialization_len_1 // 4 - 2 * meas_len_1 // 4 - 25  # in clock cycles
         self.reference_readout = self.reference_wait >= 4
-
-        self.save_data_dict = {
-            "n_avg": self.n_avg,
-            "t_vec": self.tau_vec,
-            "xy8_order": self.xy8_order,
-            "config": config,
-        }
 
         self.qmm = QuantumMachinesManager(
             host=qop_ip, cluster_name=cluster_name, octave_calibration_db_path=calibration_db_dir
@@ -233,7 +228,7 @@ class XY8(ExperimentBase):
             tau_spacing = declare(int)
             tau_half_spacing = declare(int)
             n = declare(int)
-            i = declare(int)
+            rep_counter = declare(int)
 
             counts = declare(int)
             times = declare(int, size=100)
@@ -249,10 +244,14 @@ class XY8(ExperimentBase):
                 with for_each_((tau_spacing, tau_half_spacing), (self.tau_vec_spacing, self.tau_half_vec_spacing)):
                     wait(4)  # short wait to assign the variables of the zipped loop
                     # First XY8 sequence: x90 - XY8-order block - x90
+                    # Not wrapped in strict_timing_(): it cannot coexist with the
+                    # real-time for_ loop inside _xy8_n (hard CompilationException).
+                    # Exactness is instead established empirically -- see _xy8_n.
+                    align()
                     play("x90", "NV")
-                    wait(tau_half_spacing, "NV")
-                    self._xy8_n(tau_spacing, self.xy8_order, i)
-                    wait(tau_half_spacing, "NV")
+                    play("gap", "NV", duration=tau_half_spacing)
+                    self._xy8_n(tau_spacing, self.xy8_order, rep_counter)
+                    play("gap", "NV", duration=tau_half_spacing)
                     play("x90", "NV")
                     align()  # Play the laser pulse after the XY8 sequence
                     play("laser_ON", "AOM2")
@@ -260,14 +259,14 @@ class XY8(ExperimentBase):
                     save(counts, counts_1_st)
                     measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
                     save(counts, counts_1_ref_st)
-                    wait(wait_between_runs * u.ns, "AOM2")
+                    wait(wait_between_runs * u.ns)
 
                     align()
                     # Second XY8 sequence: x90 - XY8-order block - -x90
                     play("x90", "NV")
-                    wait(tau_half_spacing, "NV")
-                    self._xy8_n(tau_spacing, self.xy8_order, i)
-                    wait(tau_half_spacing, "NV")
+                    play("gap", "NV", duration=tau_half_spacing)
+                    self._xy8_n(tau_spacing, self.xy8_order, rep_counter)
+                    play("gap", "NV", duration=tau_half_spacing)
                     play("-x90", "NV")
                     align()  # Play the laser pulse after the XY8 sequence
                     play("laser_ON", "AOM2")
@@ -275,7 +274,7 @@ class XY8(ExperimentBase):
                     save(counts, counts_2_st)
                     measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
                     save(counts, counts_2_ref_st)
-                    wait(wait_between_runs * u.ns, "AOM2")
+                    wait(wait_between_runs * u.ns)
 
                 self.refocus_loop()
 
@@ -294,8 +293,20 @@ class XY8(ExperimentBase):
         try:
             simulate = False
             if simulate:
-                simulation_config = SimulationConfig(duration=10_000)
-                _job = self.qmm.simulate(config, self.xy8_prog, simulation_config)
+                # Simulates the QUA program for the specified duration
+                simulation_config = SimulationConfig(duration=10_000)  # In clock cycles = 4ns
+                # Simulate blocks python until the simulation is done
+                job = self.qmm.simulate(config, self.xy8_prog, simulation_config)
+                # Get the simulated samples
+                samples = job.get_simulated_samples()
+                # Plot the simulated samples
+                samples.con1.plot()
+                # Get the waveform report object
+                waveform_report = job.get_simulated_waveform_report()
+                # Cast the waveform report to a python dictionary
+                waveform_dict = waveform_report.to_dict()
+                # Visualize and save the waveform report
+                waveform_report.create_plot(samples, plot=True, save_path=str(Path(__file__).resolve()))
                 return
 
             self.is_running = True
@@ -337,7 +348,8 @@ class XY8(ExperimentBase):
     def get_x(self) -> np.ndarray:
         if self.tau_vec is None:
             return np.array([])
-        return 4 * self.tau_vec  # tau (pulse-center spacing) in ns
+        # Total free evolution time (ns): T = 8 * xy8_order * tau
+        return 8 * self.xy8_order * (4 * self.tau_vec)
 
     def _safe_norm(self, a, b):
         if a is None or b is None:
@@ -358,38 +370,34 @@ class XY8(ExperimentBase):
         diff = np.nan_to_num(diff, nan=0.0, posinf=0.0, neginf=0.0)
         return diff
 
-    def save_data(self):
-        if self.tau_vec is None:
-            return
+    def get_save_name(self):
+        return "xy8"
 
-        script_name = Path(__file__).name
-        data_handler = DataHandler(root_data_folder=save_dir)
+    def get_save_data(self):
+        if self.tau_vec is None:
+            return {}
 
         n1 = self._safe_norm(self.counts1, self.counts1_ref)
         n2 = self._safe_norm(self.counts2, self.counts2_ref)
-        diff = None
-        if n1 is not None and n2 is not None:
-            diff = n1 - n2
+        diff = (n1 - n2) if (n1 is not None and n2 is not None) else None
 
-        self.save_data_dict.update(
-            {
-                "counts1_data": self.counts1,
-                "counts1_ref_data": self.counts1_ref,
-                "normalized1_data": n1,
-                "counts2_data": self.counts2,
-                "counts2_ref_data": self.counts2_ref,
-                "normalized2_data": n2,
-                "diff_data": diff,
-                "iteration": np.array([int(self.iteration)]) if self.iteration is not None else None,
-            }
-        )
-
-        data_handler.additional_files = {script_name: script_name, **default_additional_files}
-        data_handler.save_data(data=self.save_data_dict, name="xy8")
+        return {
+            "n_avg": self.n_avg,
+            "t_vec": self.tau_vec,
+            "xy8_order": self.xy8_order,
+            "counts1_data": self.counts1,
+            "counts1_ref_data": self.counts1_ref,
+            "normalized1_data": n1,
+            "counts2_data": self.counts2,
+            "counts2_ref_data": self.counts2_ref,
+            "normalized2_data": n2,
+            "diff_data": diff,
+            "iteration": np.array([int(self.iteration)]) if self.iteration is not None else None,
+        }
 
     def get_plot_info(self):
         return {
-            "x_text": "τ (pulse spacing)",
+            "x_text": "Total free evolution time",
             "x_units": "ns",
             "y_text": "Δ Normalised signal",
             "y_units": "arb. units",

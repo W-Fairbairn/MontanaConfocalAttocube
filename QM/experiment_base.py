@@ -3,11 +3,14 @@ Base class for quantum experiments (Rabi, ODMR, etc.)
 Defines the interface that all experiment classes must implement.
 """
 from abc import ABC, abstractmethod
+import inspect
 import threading
 from multiprocessing.connection import Listener
+from pathlib import Path
 
 import numpy as np
 from qm.qua import *
+from qualang_tools.results.data_handler import DataHandler
 
 from MontanaConfocalAttocube.QM.configuration import *
 
@@ -27,6 +30,7 @@ class ExperimentBase(ABC):
         self._signal_listener = None
         self._signal_listener_thread = None
         self._signal_listener_closed = False
+        self.pause_toggled = False
 
     def start_signal_listener(self):
         listener_thread = getattr(self, "_signal_listener_thread", None)
@@ -74,6 +78,10 @@ class ExperimentBase(ABC):
             return True
         return False
 
+    def toggle_scan(self):
+        self.pause_toggled = not self.pause_toggled
+        self.qm.set_io2_value(self.pause_toggled)
+
     def receive_signal(self):
         print("Thread: Sleeping until signal received...")
         address = (self.SIGNAL_HOST, self.SIGNAL_PORT)
@@ -100,11 +108,36 @@ class ExperimentBase(ABC):
         finally:
             self.close_signal_listener()
 
+    def enable_calibration_db_caching(self):
+        from tinydb import TinyDB
+        from tinydb.storages import JSONStorage
+        from tinydb.middlewares import CachingMiddleware
+
+        octave_config = getattr(self.qmm, "_octave_config", None)
+        calibration_db = getattr(octave_config, "calibration_db", None) if octave_config else None
+        if calibration_db is None:
+            return
+
+        db = getattr(calibration_db, "_db", None)
+        if db is None or isinstance(db.storage, CachingMiddleware):
+            return
+
+        db.close()
+        calibration_db._db = TinyDB(
+            calibration_db._file_path, indent=4, separators=(",", ": "), storage=CachingMiddleware(JSONStorage)
+        )
+
     def refocus_loop(self):
-        with while_(IO1):  # refocusing loop
+        io1_flag = declare(bool)
+        io2_flag = declare(bool)
+        assign(io1_flag, IO1)
+        assign(io2_flag, IO2)
+        with while_(io1_flag | io2_flag):  # refocusing loop
             play("laser_ON", "AOM2")
             wait(wait_for_initialization * u.ns, "AOM2")
             align()
+            assign(io1_flag, IO1)
+            assign(io2_flag, IO2)
 
     def _update_pulse_lengths_from_rabi_freq(self, rabi_frequency_mhz):
         # Determine π and π/2 pulse lengths in ns, snapped to 4 ns clock.
@@ -178,11 +211,38 @@ class ExperimentBase(ABC):
         pass
 
     @abstractmethod
-    def save_data(self):
+    def get_save_data(self) -> dict:
         """
-        Save the experimental data to disk.
+        Build the dict of data to persist for this experiment, from current instance
+        state (not from values captured earlier, e.g. at __init__ or compile time --
+        build it fresh here so it can't go stale).
+
+        Returns:
+            dict: data to save, e.g. {"t_vec": self.t_vec, "counts_data": self.counts}.
+                Return an empty dict if there is nothing to save (e.g. Counter).
         """
         pass
+
+    @abstractmethod
+    def get_save_name(self) -> str:
+        """
+        Name used for the saved-data folder, e.g. "rabi", "cw_odmr", "t1".
+        """
+        pass
+
+    def save_data(self):
+        """
+        Shared save implementation for all experiments. Subclasses should not
+        override this -- implement get_save_data() / get_save_name() instead.
+        """
+        data = self.get_save_data()
+        if not data:
+            return
+
+        data.setdefault("config", config)
+
+        data_handler = DataHandler(root_data_folder=save_dir)
+        data_handler.save_data(data=data, name=self.get_save_name())
 
     @abstractmethod
     def get_plot_info(self) -> dict:

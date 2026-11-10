@@ -47,8 +47,8 @@ time_arr_len = 100
 
 # Optional: override x90/-x90 pulse lengths from a Rabi frequency (same approach as Hahn_Echo)
 # Comment this out if you want to use the values already defined in configuration.py.
-rabi_frequency = 10.55 * u.MHz
-ODMR_peak_freq = -131 * u.MHz
+rabi_frequency = 10.44 * u.MHz
+ODMR_peak_freq = 128.41 * u.MHz
 pi_pulse_len = (1 / (2 * rabi_frequency)) / 1e-9  # ns
 config["octaves"][octave]["RF_outputs"][1]["gain"] = 0
 print("pi", pi_pulse_len, "ns")
@@ -57,6 +57,9 @@ config["pulses"]["x180_pulse"]["length"] = (pi_pulse_len) // 4 * 4
 config["pulses"]["x90_pulse"]["length"] = (pi_pulse_len / 2) // 4 * 4
 config["pulses"]["-x90_pulse"]["length"] = (pi_pulse_len / 2) // 4 * 4
 config["pulses"]["x270_pulse"]["length"] = (pi_pulse_len * 1.5) // 4 * 4
+
+t = 100 // 4  # free-evolution delay, in 4ns clock cycles (100 ns total)
+
 
 
 # Data to save
@@ -87,7 +90,6 @@ with program() as x90_test:
     # One-time laser spin init like Hahn_Echo
     play("laser_ON", "AOM2")
     wait(wait_between_runs * u.ns, "AOM2")
-    t = 100//4
     update_frequency("NV", ODMR_peak_freq, keep_phase=True)
     with for_(n, 0, n < n_avg, n + 1):
         # --- x90 sequence ---
@@ -95,9 +97,9 @@ with program() as x90_test:
         #update_frequency("NV", ODMR_peak_freq)
         align()
         play("x90" * amp(1), "NV")
-        wait(t)
+        play("gap", "NV", duration=t)
         play("x180" * amp(1), "NV")
-        wait(t)
+        play("gap", "NV", duration=t)
         play("x90" * amp(1), "NV")
         align()
         play("laser_ON", "AOM2")
@@ -116,14 +118,11 @@ with program() as x90_test:
         #reset_if_phase("NV")
         #update_frequency("NV", ODMR_peak_freq)
         align()
-        align()
         play("x90" * amp(1), "NV")
-        wait(t)
+        play("gap", "NV", duration=t)
         play("x180" * amp(1), "NV")
-        wait(t)
+        play("gap", "NV", duration=t)
         play("-x90" * amp(1), "NV")
-        align()
-          # short wait to ensure the two pulses are not perfectly back-to-back, which can cause issues with some AOMs
         align()
         play("laser_ON", "AOM2")
         measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
