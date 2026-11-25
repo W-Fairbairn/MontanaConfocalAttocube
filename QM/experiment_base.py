@@ -9,7 +9,7 @@ from multiprocessing.connection import Listener
 import numpy as np
 from qm.qua import *
 
-from MontanaConfocalAttocube.QM.configuration import *
+from configuration import *
 
 
 class ExperimentBase(ABC):
@@ -102,8 +102,8 @@ class ExperimentBase(ABC):
 
     def refocus_loop(self):
         with while_(IO1):  # refocusing loop
-            play("laser_ON", "AOM2")
-            wait(wait_for_initialization * u.ns, "AOM2")
+            play("gate_on", "aom_gate")
+            wait(wait_for_initialization * u.ns, "aom_gate")
             align()
 
     def _update_pulse_lengths_from_rabi_freq(self, rabi_frequency_mhz):

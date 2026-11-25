@@ -148,7 +148,9 @@ class HahnEcho(ExperimentBase):
             print(f"Warning: failed to set Octave RF gain for NV to {self.gain} dB: {e}")
 
         # Clear data arrays from previous runs
-        self.counts1 = self.counts1_ref = self.counts2 = self.counts2_ref = self.iteration = None
+        self.counts1 = self.counts1_ref = self.counts2 = self.counts2_ref = (
+            self.iteration
+        ) = None
 
         with program() as self.hahn_echo:
             counts = declare(int)
@@ -163,39 +165,55 @@ class HahnEcho(ExperimentBase):
             n = declare(int)
             n_st = declare_stream()
 
-            update_frequency("NV", self.odmr_if_freq)
+            update_frequency("qe1", self.odmr_if_freq)
 
             with for_(n, 0, n < self.n_avg, n + 1):
                 with for_(*from_array(t, self.t_vec)):
                     # Sequence 1: x90 - τ - x180 - τ - x90
                     align()
-                    play("x90" * amp(1), "NV")
-                    wait(t)
-                    play("x180" * amp(1), "NV")
-                    wait(t)
-                    play("x90" * amp(1), "NV")
+                    play("x90" * amp(1), "qe1")
+                    # wait(t, "qe1")
+                    # play("x180" * amp(1), "qe1")
+                    wait(t, "qe1")
+                    play("x90" * amp(1), "qe1")
 
                     align()
-                    play("laser_ON", "AOM2")
-                    measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
+                    play("gate_on" * amp(1), "aom_gate")
+                    measure(
+                        "readout",
+                        "photon_in_read",
+                        time_tagging.analog(times, meas_len_1, counts),
+                    )
                     save(counts, counts_1_st)
-                    measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
+                    measure(
+                        "readout",
+                        "photon_in_read",
+                        time_tagging.analog(times, meas_len_1, counts),
+                    )
                     save(counts, counts_1_ref_st)
                     wait(wait_between_runs * u.ns)
 
                     # Sequence 2: x90 - τ - x180 - τ - -x90
                     align()
-                    play("x90" * amp(1), "NV")
-                    wait(t)
-                    play("x180" * amp(1), "NV")
-                    wait(t)
-                    play("-x90" * amp(1), "NV")
+                    play("x90" * amp(1), "qe1")
+                    # wait(t, "qe1")
+                    # play("x180" * amp(1), "qe1")
+                    wait(t, "qe1")
+                    play("-x90" * amp(1), "qe1")
 
                     align()
-                    play("laser_ON", "AOM2")
-                    measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
+                    play("gate_on" * amp(1), "aom_gate")
+                    measure(
+                        "readout",
+                        "photon_in_read",
+                        time_tagging.analog(times, meas_len_1, counts),
+                    )
                     save(counts, counts_2_st)
-                    measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
+                    measure(
+                        "readout",
+                        "photon_in_read",
+                        time_tagging.analog(times, meas_len_1, counts),
+                    )
                     save(counts, counts_2_ref_st)
                     wait(wait_between_runs * u.ns)
 
@@ -279,6 +297,57 @@ class HahnEcho(ExperimentBase):
         diff = n1 - n2
         diff = np.nan_to_num(diff, nan=0.0, posinf=0.0, neginf=0.0)
         return diff
+
+    def get_err(self) -> np.ndarray | None:
+        """Shot-noise error bars for the Δ (difference of two normalized
+        ratios) signal get_y() returns, combining the independent
+        Poissonian errors of each of the four raw count arrays in
+        quadrature (same relative-error pattern as T1.get_err())."""
+        if (
+            self.counts1 is None
+            or self.counts1_ref is None
+            or self.counts2 is None
+            or self.counts2_ref is None
+            or self.iteration is None
+        ):
+            return None
+
+        def ratio_err(sig, ref):
+            sig_safe = np.where(sig == 0, np.nan, sig)
+            ref_safe = np.where(ref == 0, np.nan, ref)
+            sig_err = np.sqrt(np.abs(sig) * self.iteration) / self.iteration
+            ref_err = np.sqrt(np.abs(ref) * self.iteration) / self.iteration
+            norm = sig / ref_safe
+            err = np.abs(norm) * np.sqrt(
+                (sig_err / sig_safe) ** 2 + (ref_err / ref_safe) ** 2
+            )
+            return np.nan_to_num(err, nan=0.0, posinf=0.0, neginf=0.0)
+
+        err1 = ratio_err(self.counts1, self.counts1_ref)
+        err2 = ratio_err(self.counts2, self.counts2_ref)
+        return np.sqrt(err1**2 + err2**2)
+
+    def get_signal_range(self):
+        """Min/max (in cps) of the raw signal-window counts underlying the
+        current sweep, combined across both sequences (the two Hahn echo
+        sequences are structurally symmetric, not a main/secondary pair).
+        The Δ-of-ratios plot always looks like a small number near zero
+        regardless of whether the underlying photon counts are strong or
+        weak, so this gives a live "how strong is my signal right now"
+        readout while optimizing alignment. Converted to cps (rather than
+        shown as raw per-shot counts within the meas_len_1 window) since
+        the raw counts are typically well below 1 at realistic count rates
+        and would otherwise always round to "0". Uses _windowed_rate()
+        rather than self.counts1/2 directly since those are cumulative
+        averages since the job started and respond too slowly to
+        real-time changes (see its docstring). Returns (min, max, unit)
+        or None if no data yet."""
+        if self.counts1 is None or self.counts2 is None:
+            return None
+        windowed1 = self._windowed_rate("_signal_rate_cache_1", self.iteration, self.counts1)
+        windowed2 = self._windowed_rate("_signal_rate_cache_2", self.iteration, self.counts2)
+        combined_cps = np.concatenate([windowed1, windowed2]) / (meas_len_1 * 1e-9)
+        return float(np.min(combined_cps)), float(np.max(combined_cps)), "cps"
 
     def save_data(self):
         if self.t_vec is None:

@@ -30,6 +30,7 @@ from Counter import Counter, SettingsDialogCounter
 from T1 import T1, SettingsDialogT1
 from Hahn_Echo import HahnEcho, SettingsDialogHahnEcho
 from xy8 import XY8, SettingsDialogXY8
+from HBT import HBT, SettingsDialogHBT
 from experiment_base import ExperimentBase
 from styles import MAIN_WINDOW_STYLESHEET, PLOT_WIDGET_BG, get_textbox_palette, get_toolbar_palette
 
@@ -93,7 +94,7 @@ class MainGui(QtCore.QObject):
         self.running: bool = False
         self.program: ExperimentBase | None = None
         self.settings_dialog = None
-        self.experiments = ["Counter", "Rabi", "ODMR", "T1", "HahnEcho", "XY8"]
+        self.experiments = ["Counter", "Rabi", "ODMR", "T1", "HahnEcho", "XY8", "HBT"]
         self.classes = {
             "Counter": (Counter, SettingsDialogCounter),
             "Rabi": (Rabi, SettingsDialogRabi),
@@ -101,6 +102,7 @@ class MainGui(QtCore.QObject):
             "T1": (T1, SettingsDialogT1),
             "HahnEcho": (HahnEcho, SettingsDialogHahnEcho),
             "XY8": (XY8, SettingsDialogXY8),
+            "HBT": (HBT, SettingsDialogHBT),
         }
         # Load the last selected experiment from persistent storage, default to "Rabi"
         self.current_experiment: str = settings.value("current_experiment", "Counter")
@@ -138,7 +140,15 @@ class MainGui(QtCore.QObject):
         self._mw.counting_control_ToolBar.addSeparator()
         self._mw.counting_control_ToolBar.addWidget(spacer)
 
-        # Add a button to clear the current fit
+        # Live error-bar overlay toggle - enabled/disabled per-experiment in
+        # init_program() based on whether program.get_err() exists (it
+        # doesn't for Counter, which has no meaningful per-point error).
+        # Created before the first init_program() call below since that
+        # method reads its checked/enabled state.
+        self.error_bars_checkbox = QtWidgets.QCheckBox("Show Error Bars")
+        self.error_bars_checkbox.setChecked(False)
+        self.error_bars_checkbox.toggled.connect(self.on_error_bars_toggled)  # type: ignore
+        self._mw.counting_control_ToolBar.addWidget(self.error_bars_checkbox)
 
 
         container = QtWidgets.QWidget()
@@ -209,6 +219,65 @@ class MainGui(QtCore.QObject):
         self.program = program_class()  # Instantiate the program class
         self.settings_dialog = settings_dialog_class(self._mw)  # Instantiate the settings dialog
         self.update_plot_labels()
+        self.error_bars_checkbox.setEnabled(hasattr(self.program, "get_err"))
+
+
+        if hasattr(self.program, "get_fft_y"):
+            self.fft_image = self.add_additional_plot(
+                np.array([]),
+                np.array([]),
+                pen=pg.mkPen(palette.c1, width=2),
+                plot_name="fft",
+                target_plot=self.plots["fft"],
+            )
+
+        if self.current_experiment == "T1 w/ RF":
+            # For T1 w/ RF, the RF and delta curves get their own stacked plots
+            self.rf_image = self.add_additional_plot(
+                np.array([]),
+                np.array([]),
+                pen=None,
+                symbol="o",
+                symbolPen=palette.c2,
+                symbolBrush=palette.c2,
+                symbolSize=5,
+                plot_name="with_rf",
+                target_plot=self.plots["rf"],
+            )
+            self.rf_fit_image = self.add_additional_plot(
+                np.array([]),
+                np.array([]),
+                pen=pg.mkPen(palette.c2, width=3, style=QtCore.Qt.PenStyle.DashLine),
+                plot_name="tw_with_rf_fit",
+                target_plot=self.plots["rf"],
+            )
+            self.delta_image = self.add_additional_plot(
+                np.array([]),
+                np.array([]),
+                pen=None,
+                symbol="o",
+                symbolPen=palette.c3,
+                symbolBrush=palette.c3,
+                symbolSize=5,
+                plot_name="delta",
+                target_plot=self.plots["delta"],
+            )
+            self.delta_fit_image = self.add_additional_plot(
+                np.array([]),
+                np.array([]),
+                pen=pg.mkPen(palette.c3, width=3, style=QtCore.Qt.PenStyle.DashLine),
+                plot_name="delta_fit",
+                target_plot=self.plots["delta"],
+            )
+
+            if hasattr(self.program, "get_err_rf"):
+                self.error_bar_item_rf = pg.ErrorBarItem(pen=pg.mkPen(palette.c2, width=1))
+                self.error_bar_item_rf.setVisible(self.error_bars_checkbox.isChecked())
+                self.plots["rf"].addItem(self.error_bar_item_rf)
+            if hasattr(self.program, "get_err_delta"):
+                self.error_bar_item_delta = pg.ErrorBarItem(pen=pg.mkPen(palette.c3, width=1))
+                self.error_bar_item_delta.setVisible(self.error_bars_checkbox.isChecked())
+                self.plots["delta"].addItem(self.error_bar_item_delta)
 
     def on_experiment_changed(self, experiment_name):
         """Handle experiment selection change, preserving graph data"""
@@ -299,6 +368,34 @@ class MainGui(QtCore.QObject):
         """Display an error message in a message box"""
         QtWidgets.QMessageBox.critical(self._mw, "Error", message)
 
+
+    def on_error_bars_toggled(self, checked):
+        for item in (self.error_bar_item, self.error_bar_item_rf, self.error_bar_item_delta):
+            if item is not None:
+                item.setVisible(checked)
+
+    def _update_error_bars(self, error_bar_item, x_data, y_data, err_getter):
+        if error_bar_item is None:
+            return
+        if not self.error_bars_checkbox.isChecked():
+            error_bar_item.setVisible(False)
+            return
+        try:
+            yerr = err_getter()
+        except Exception as e:
+            print(f"Error computing error bars: {e}")
+            yerr = None
+        if yerr is None or len(yerr) != len(x_data):
+            error_bar_item.setVisible(False)
+            return
+        error_bar_item.setData(
+            x=np.asarray(x_data, dtype=float),
+            y=np.asarray(y_data, dtype=float),
+            top=np.asarray(yerr, dtype=float),
+            bottom=np.asarray(yerr, dtype=float),
+        )
+        error_bar_item.setVisible(True)
+
     def run_toggled(self, run):
         if run:
             # Clear the fit from the previous run
@@ -360,18 +457,12 @@ class MainGui(QtCore.QObject):
         return
 
     def update_plot_data(self):
-        """
-        Update the plot data from the program.
-        This method is called by QTimer at regular intervals and runs in the Qt event loop,
-        so it's safe to update GUI elements directly without threading issues.
-        """
         if self.running:
-            try:
-                x_data = self.program.get_x()
-                y_data = self.program.get_y()
-                if x_data is not None and y_data is not None:
+            x_data = self.program.get_x()
+            y_data = self.program.get_y()
+            if x_data is not None and y_data is not None:
+                try:
                     self.image.setData(x_data, y_data)
-
                     # For Counter experiment, also update the rolling average fit line and statistics
                     if self.current_experiment == "Counter":
                         x_fit, y_fit, fit_text = self.program.fit()
@@ -384,8 +475,8 @@ class MainGui(QtCore.QObject):
 
                     # Continuously save data during measurement
                     self.save_graph_data()
-            except Exception as e:
-                print(f"Error updating plot data: {e}")
+                except Exception as e:
+                    print(f"Error updating plot data: {e}")
 
     def handle_window_close(self):
         # Save the currently selected experiment before closing

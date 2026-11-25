@@ -111,19 +111,45 @@ class CW_ODMR(ExperimentBase):
         with program() as self.cw_odmr:
             times = declare(int, size=100)  # QUA vector for storing the time-tags
             counts = declare(int)  # variable for number of counts
+            counts_2 = declare(int)
+            counts_comb = declare(int)
             counts_st = declare_stream()  # stream for counts
             f = declare(int)  # frequencies
             n = declare(int)  # number of iterations
             n_st = declare_stream()  # stream for number of iterations
+            IO_false = declare(fixed, False)
 
             with for_(n, 0, n < self.n_avg, n + 1):
                 with for_(*from_array(f, self.f_vec)):
-                    update_frequency("NV", f)
-                    play("cw" * amp(1), "NV", duration=self.readout_len * u.ns)
-                    play("laser_ON", "AOM2", duration=self.readout_len * u.ns)
-                    measure("long_readout", "SPCM1", time_tagging.analog(times, self.readout_len, counts))
-                    save(counts, counts_st)  # save counts on stream
-                    self.refocus_loop()
+                    # Update the frequency of the digital oscillator linked to the element "NV"
+                    update_frequency("qe1", f)
+                    # align all elements before starting the sequence
+                    align()
+                    # Play the mw pulse...
+                    play("cw" * amp(1), "qe1", duration=self.readout_len * u.ns)
+                    # ... and the laser pulse simultaneously (the laser pulse is delayed by 'laser_delay_1')
+                    play("gate_on", "aom_gate", duration=self.readout_len * u.ns)
+                    wait(
+                        1_000 * u.ns, "photon_in_read"
+                    )  # so readout don't catch the first part of spin reinitialization
+                    # Measure and detect the photons on SPCM1
+
+                    measure(
+                        "readout",
+                        "photon_in_read",
+                        time_tagging.analog(times, self.readout_len, counts),
+                    )
+                    measure(
+                        "readout",
+                        "photon_in_read_2",
+                        time_tagging.analog(times, self.readout_len, counts_2),
+                    )
+
+                    assign(counts_comb, counts + counts_2)
+                    save(counts_comb, counts_st)  # save counts on stream
+
+                    wait(wait_between_runs * u.ns)
+
                     save(n, n_st)  # save number of iteration inside for_loop
 
             with stream_processing():
@@ -143,6 +169,21 @@ class CW_ODMR(ExperimentBase):
             return self.counts / (self.readout_len * 1e-9)
         else:
             return np.zeros(len(self.f_vec))
+
+    def get_err(self):
+        """Shot-noise error bars in the same (normalized) frame get_y()
+        returns by default, since that's what's live-plotted. Propagates
+        Poissonian counting error through the min-max normalization,
+        ignoring the (usually small) uncertainty in the min/max themselves
+        - a standard simplification for a live-view error bar, not a
+        rigorous full covariance treatment."""
+        if self.counts is None or self.iteration is None:
+            return None
+        count_err = np.sqrt(self.counts * self.iteration) / self.iteration
+        span = np.max(self.counts) - np.min(self.counts)
+        if span == 0:
+            return np.zeros_like(self.counts)
+        return count_err / span
 
     def stop_program(self):
         self.is_running = False
@@ -205,10 +246,15 @@ class CW_ODMR(ExperimentBase):
             # Convert to arrays
             x = np.asarray(x, dtype=float)
             y = np.asarray(y, dtype=float)
+            # get_y(normalize=True) min-max rescales the whole sweep to [0, 1], which forces
+            # the deepest point to 0 and the brightest to 1 regardless of the real contrast.
+            # Fitting/contrast must be done on the un-normalized counts (cps) so the amplitude
+            # is measured against the real baseline fluorescence, not the display window.
+            y_cps = np.asarray(self.get_y(normalize=False), dtype=float)
             self.num_peaks = int(SettingsDialogODMR.get("num_peaks", 1))
             # --- Peak finding for ODMR dips ---
             # ODMR shows dips in y. Work on an inverted, baseline-corrected, lightly smoothed trace.
-            y0 = y - np.median(y)
+            y0 = y_cps - np.median(y_cps)
 
             # Light smoothing to suppress point-to-point noise (moving average).
             # Keep it small so we don't wash out narrow resonances.

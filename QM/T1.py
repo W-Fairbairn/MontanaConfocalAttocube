@@ -109,9 +109,23 @@ class T1(ExperimentBase):
 
         with program() as self.T1:
             counts = declare(int)  # saves number of photon counts
-            counts_ref = declare(int)  # saves number of photon counts in reference readout
-            times = declare(int, size=time_arr_len)  # QUA vector for storing the time-tags
-            times_ref = declare(int, size=time_arr_len)  # QUA vector for storing the time-tags of reference counts
+            counts_2 = declare(int)  # saves number of photon counts in second readout
+            combined_counts = declare(int)  # saves combined counts of both readouts
+            counts_ref = declare(
+                int
+            )  # saves number of photon counts in reference readout
+            counts_ref_2 = declare(
+                int
+            )  # saves number of photon counts in second reference readout
+            combined_counts_ref = declare(
+                int
+            )  # saves combined counts of both reference readouts
+            times = declare(
+                int, size=time_arr_len
+            )  # QUA vector for storing the time-tags
+            times_ref = declare(
+                int, size=time_arr_len
+            )  # QUA vector for storing the time-tags of reference counts
             times_st = declare_stream()  # stream to save time tags of counts, ref
             counts_st = declare_stream()  # stream for counts
             counts_ref_st = declare_stream()  # stream for reference counts
@@ -124,55 +138,55 @@ class T1(ExperimentBase):
             i = declare(int)  # variable to sweep over time tags
 
             if self.mw:
-                update_frequency("NV", self.odmr_if_freq)
+                update_frequency("qe1", self.odmr_if_freq)
 
             with for_(n, 0, n < self.n_avg, n + 1):
                 with for_(*from_array(t, self.t_vec)):
+                    # play("gate_on", "aom_gate")  # laser on for initialization seems to work better if this is done every loop
                     align()
-                    wait(t)                                      # wait the variable delay (in clock cycles)
+                    wait(t)
                     align()
-                    play("laser_ON", "AOM2")        # laser on for readout
-                    measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
-                    save(counts, counts_st)
-                    measure("readout", "SPCM1", time_tagging.analog(times_ref, meas_len_1, counts_ref))
-                    save(counts_ref, counts_ref_st)  # save ref counts
+                    play("gate_on", "aom_gate") 
+                    measure("readout","photon_in_read", time_tagging.analog(times, meas_len_1, counts))
+                    measure("readout","photon_in_read_2",time_tagging.analog(times, meas_len_1, counts_2)) 
+                    align("photon_in_read", "photon_in_read_2")  # align the two readouts
+                    measure("readout","photon_in_read",time_tagging.analog(times_ref, meas_len_1, counts_ref))
+                    measure("readout","photon_in_read_2",time_tagging.analog(times_ref, meas_len_1, counts_ref_2))
 
-                    with if_(self.mw):
-                        align()
-                        play("x180" * amp(1), "NV")
-                        align()
-                        wait(t)                                      # wait the variable delay (in clock cycles)
-                        align()
-                        play("laser_ON", "AOM2")        # laser on for readout
-                        measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
-                        save(counts, counts_mw_st)
-                        measure("readout", "SPCM1", time_tagging.analog(times_ref, meas_len_1, counts_ref))
-                        save(counts_ref, counts_mw_ref_st)  # save ref counts
+                    assign(combined_counts, counts + counts_2)
+                    save(combined_counts, counts_st)
+                    assign(combined_counts_ref, counts_ref + counts_ref_2)
+                    save(combined_counts_ref, counts_ref_st)  # save reference counts
 
-                    # noinspection PyTypeChecker
-                    #with for_(i, 0, i < counts, i + 1):
-                    #    save(times[i], times_st)  # cant directly save QUA vector, loop and save each element separately
+                    if self.mw:
+                        align()
+                        play("x180" * amp(1), "qe1")
+                        wait(t)
+                        align()
+                        play("gate_on", "aom_gate")
+                        measure("readout","photon_in_read", time_tagging.analog(times, meas_len_1, counts))
+                        measure("readout","photon_in_read_2",time_tagging.analog(times, meas_len_1, counts_2))
+                        align("photon_in_read", "photon_in_read_2")  # align the two readouts
+                        measure("readout","photon_in_read",time_tagging.analog(times_ref, meas_len_1, counts_ref))
+                        measure("readout","photon_in_read_2",time_tagging.analog(times_ref, meas_len_1, counts_ref_2))
+
+                        assign(combined_counts, counts + counts_2)
+                        save(combined_counts, counts_mw_st)
+                        assign(combined_counts_ref, counts_ref + counts_ref_2)
+                        save(combined_counts_ref, counts_mw_ref_st)  # save reference counts
+                    
 
                 self.refocus_loop()
 
                 save(n, n_st)  # save number of iteration inside for_loop
 
             with stream_processing():
-                counts_st.buffer(len(self.t_vec)).average().save("counts")  # save average counts for each point in an array
+                counts_st.buffer(len(self.t_vec)).average().save("counts")
                 counts_ref_st.buffer(len(self.t_vec)).average().save("counts_ref")
+                n_st.save("iteration")
                 if self.mw:
                     counts_mw_st.buffer(len(self.t_vec)).average().save("counts_mw")
                     counts_mw_ref_st.buffer(len(self.t_vec)).average().save("counts_mw_ref")
-                #times_st.buffer(time_arr_len).save("time_tags")  # save time tags buffer size should be larger than counts expected
-                n_st.save("iteration")
-
-                # save_all creates large buffer of data on OPX
-                # if iterations and point count are too large may exceed memory limit (100E6 int)
-                #counts_st.buffer(len(self.t_vec)).save_all("raw_counts")
-                #counts_ref_st.buffer(len(self.t_vec)).save_all("raw_counts_ref")
-        print(f"4 (program compilation: {time_module.time() - t3:.2f}s)")
-
-
     def get_x(self):
         return self.t_vec * 4 * 1e-9  # Convert to seconds
 

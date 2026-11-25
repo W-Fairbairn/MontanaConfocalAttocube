@@ -17,7 +17,7 @@ Next steps before going to the next node:
 """
 import numpy as np
 from qm import QuantumMachinesManager
-from qm.qua import *
+#from qm.qua import *
 from qm import SimulationConfig
 #from configuration import *
 from qualang_tools.results.data_handler import DataHandler
@@ -79,10 +79,10 @@ class Rabi(ExperimentBase):
         # Best-effort: restore on actual Octave hardware too (if QM is available)
         if self.original_rf_gain is not None and self.qm is not None:
             try:
-                self.qm.octave.set_rf_output_gain("NV", self.original_rf_gain)
+                self.qm.octave.set_rf_output_gain("qe1", self.original_rf_gain)
             except Exception as e:
                 print(
-                    f"Warning: failed to restore Octave RF output gain for NV to {self.original_rf_gain} dB: {e}"
+                    f"Warning: failed to restore Octave RF output gain for qe1 to {self.original_rf_gain} dB: {e}"
                 )
 
     def compile_program(self):
@@ -96,64 +96,73 @@ class Rabi(ExperimentBase):
         # Save original values to restore later so other experiments aren't affected.
         self.original_rf_gain = config["octaves"][octave]["RF_outputs"][1].get("gain")
         self.original_output_mode = config["octaves"][octave]["RF_outputs"][1].get("output_mode")
-
         # Apply requested gain for this experiment
         config["octaves"][octave]["RF_outputs"][1]["gain"] = self.gain
+
+        self.counts, self.counts_ref, self.iteration, self.time_tags = None, None, None, None
+
+        self.t_vec = np.arange(4, self.length_run // 4, max(1, self.length_run // (4 * self.num_points)))
+        freq = freq * u.MHz  # Hz
+
         self.qmm = QuantumMachinesManager(host=qop_ip, cluster_name=cluster_name,
                                           octave_calibration_db_path=calibration_db_dir)
         self.qm = self.qmm.open_qm(config, close_other_machines=True)
 
         # Apply gain on the Octave hardware as well (best-effort)
         try:
-            self.qm.octave.set_rf_output_gain("NV", self.gain)
+            self.qm.octave.set_rf_output_gain("qe1", self.gain)
         except Exception as e:
             print(f"Warning: failed to set Octave RF output gain for NV to {self.gain} dB: {e}")
 
-        # Clear data arrays from previous runs
-        self.counts, self.counts_ref, self.iteration, self.time_tags = None, None, None, None
-
-
-        self.t_vec = np.arange(4, self.length_run // 4, max(1, self.length_run // (4 * self.num_points)))
-        freq = freq * u.MHz  # Hz
+        #
         ###################
         # The QUA program #
         ###################
         with program() as self.time_rabi:
             counts = declare(int)  # variable for number of counts
             counts_ref = declare(int)  # variable for number of counts in reference window
+            counts_2 = declare(int)  # counts from second SPCM
+            counts_ref_2 = declare(int)  # reference counts from second SPCM
+            combined_counts = declare(int)  # summed counts of both SPCMs
+            combined_counts_ref = declare(int)  # summed reference counts of both SPCMs
             counts_st = declare_stream()  # stream for counts
             counts_ref_st = declare_stream()  # stream for reference counts
             times = declare(int, size=1000)  # QUA vector for storing the time-tags
+            times_2 = declare(int, size=1000)  # QUA vector for storing the time-tags of second SPCM
             t = declare(int)  # variable to sweep over in time
-            i = declare(int)  # variable to sweep over
             n = declare(int)  # variable to for_loop
 
             n_st = declare_stream()  # stream to save iterations
-            times_st = declare_stream()
 
             # Spin initialization
-            play("laser_ON", "AOM2")
-            wait(wait_for_initialization)  # Wait for spin to return to ground state
+            play("gate_on", "aom_gate")
+            wait(
+                wait_for_initialization * u.ns, "aom_gate"
+            )  # Wait for spin to return to ground state
             align()  # Ensure initialization is complete before starting Rabi
 
             # Time Rabi sweep
             with for_(n, 0, n < self.n_avg, n + 1):
                 with for_(*from_array(t, self.t_vec)):
-                    update_frequency("NV", freq)
+                    update_frequency("qe1", freq)
                     align()
-                    play("cw" * amp(1), "NV", duration=t)
+                    play("cw" * amp(1), "qe1", duration=t)
                     align()  # Play the laser pulse after the mw pulse
-                    play("laser_ON", "AOM2")
+                    play("gate_on", "aom_gate")
 
-                    # Signal window
-                    measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
-                    save(counts, counts_st)  # save counts
-                    with for_(i, 0, i < counts, i + 1):
-                        save(times[i], times_st)  # cant directly save QUA vector, loop and save each element separately
+                    # Signal window (both SPCMs)
+                    measure("readout", "photon_in_read", time_tagging.analog(times, meas_len_1, counts))
+                    measure("readout", "photon_in_read_2", time_tagging.analog(times_2, meas_len_1, counts_2))
+                    align("photon_in_read", "photon_in_read_2")  # align the two readouts
 
-                    # Reference window
-                    measure("readout", "SPCM1", time_tagging.analog(times, meas_len_1, counts))
-                    save(counts, counts_ref_st)
+                    # Reference window (both SPCMs)
+                    measure("readout", "photon_in_read", time_tagging.analog(times, meas_len_1, counts_ref))
+                    measure("readout", "photon_in_read_2", time_tagging.analog(times_2, meas_len_1, counts_ref_2))
+
+                    assign(combined_counts, counts + counts_2)
+                    save(combined_counts, counts_st)
+                    assign(combined_counts_ref, counts_ref + counts_ref_2)
+                    save(combined_counts_ref, counts_ref_st)
                     wait(wait_between_runs * u.ns)
                     self.refocus_loop()
 
@@ -162,11 +171,13 @@ class Rabi(ExperimentBase):
             with stream_processing():
                 counts_st.buffer(len(self.t_vec)).average().save("counts")
                 counts_ref_st.buffer(len(self.t_vec)).average().save("counts_ref")
-                times_st.buffer(1000).save("time_tags")
                 n_st.save("iteration")
 
     def get_x(self):
-        return self.t_vec * 4  # Convert to ns
+        if self.t_vec is not None:
+            return self.t_vec * 4  # Convert to ns
+        else:
+            return np.array([])
 
     def get_y(self):
         if self.counts is not None and self.counts_ref is not None:
@@ -279,11 +290,11 @@ class Rabi(ExperimentBase):
             else:
                 self.is_running = True
                 self.job = self.qm.execute(self.time_rabi)
-                results = fetching_tool(self.job, data_list=["counts", "counts_ref", "iteration", "time_tags"], mode="live")
+                results = fetching_tool(self.job, data_list=["counts", "counts_ref", "iteration"], mode="live")
                 self.start_signal_listener()
                 while results.is_processing():
-                    self.counts, self.counts_ref, self.iteration, self.time_tags = results.fetch_all()
-                    # Add debug plots here if needed
+                    self.counts, self.counts_ref, self.iteration = results.fetch_all()
+                    print(self.iteration, self.counts)
                     time.sleep(0.01)  # Small sleep to prevent CPU spinning
                 self.save_data()
         except Exception as e:

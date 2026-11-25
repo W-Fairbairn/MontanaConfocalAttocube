@@ -12,7 +12,7 @@ from pathlib import Path
 from qm import QuantumMachinesManager
 from qm.qua import *
 from qm import SimulationConfig
-#from configuration import *
+from configuration import *
 from qbstyles import mpl_style
 mpl_style(dark=True)
 
@@ -57,30 +57,50 @@ class Counter(ExperimentBase):
         # The QUA program #
         ###################
         with program() as self.counter:
-            times = declare(int, size=100)  # QUA vector for storing the time-tags
+            times = declare(int, size=1000)  # QUA vector for storing the time-tags
+            times_2 = declare(int, size=1000)  # QUA vector for storing the time-tags
             counts = declare(int)  # variable for number of counts of a single chunk
+            counts_2 = declare(int)  # variable for number of counts of a single chunk
             total_counts = declare(int)  # variable for the total number of counts
+            total_counts_2 = declare(int)  # variable for the total number of counts
             n = declare(int)  # number of iterations
             counts_st = declare_stream()  # stream for counts
-
+            counts_st_2 = declare_stream()  # stream for counts
             # Infinite loop to allow the user to work on the experimental set-up while looking at the counts
             with infinite_loop_():
                 # Loop over the chunks to measure for the total integration time
                 with for_(n, 0, n < n_count, n + 1):
                     # Play the laser pulse...
-                    play("laser_ON", "AOM2")
+                    # play("laser_ON", "AOM2")
+                    play("gate_on", "aom_gate")
                     # ... while measuring the events from the SPCM
-                    measure("readout", "SPCM1", time_tagging.analog(times, meas_len, counts))
+                    measure(
+                        "readout",
+                        "photon_in_read",
+                        time_tagging.analog(times, meas_len, counts),
+                    )
                     # Increment the received counts
                     assign(total_counts, total_counts + counts)
 
+                    measure(
+                        "readout",
+                        "photon_in_read_2",
+                        time_tagging.analog(times_2, meas_len, counts_2),
+                    )
+
+                    assign(total_counts_2, total_counts_2 + counts_2)
+
                 # Save the counts
                 save(total_counts, counts_st)
+                save(total_counts_2, counts_st_2)
+
                 assign(total_counts, 0)
-                self.refocus_loop()
+                assign(total_counts_2, 0)
 
             with stream_processing():
+                # counts_st.with_timestamps().save_all("counts")
                 counts_st.with_timestamps().save_all("counts")
+                counts_st_2.with_timestamps().save_all("counts_2")
 
     def get_x(self):
         """Return time data in seconds"""
@@ -159,27 +179,48 @@ class Counter(ExperimentBase):
             # Get results from QUA program
             res_handles = self.job.result_handles
             counts_handle = res_handles.get("counts")
+            counts_handle_2 = res_handles.get("counts_2")
             counts_handle.wait_for_values(5)
             self.time_data = []
             self.counts_data = []
             self.rolling_avg_data = []
             points = 1000
             last_idx = 0
+            last_idx_2 = 0
 
             while res_handles.is_processing() and self.is_running:
-                new_idx = counts_handle.count_so_far()
-                new_counts = counts_handle.fetch(slice(last_idx, new_idx))
-                last_idx = new_idx
+                total = counts_handle.count_so_far()
+                total_2 = counts_handle_2.count_so_far()
+                if total > last_idx:
+                    data = counts_handle.fetch(slice(last_idx + 1, total))
+                    data_2 = counts_handle_2.fetch(slice(last_idx + 1, total_2))
 
-                self.time_data.extend(new_counts["timestamp"] / 1E9)  # Convert timestamps to seconds
-                self.counts_data.extend(new_counts["value"] / (meas_len_1*1E-9*3000)) # Convert counts to kcps
+                    times = np.sort(
+                        data["timestamp"] / 1e9
+                    )  # Convert timestamps to seconds and sort them
+                    values = (
+                        data["value"] + data_2["value"][np.argsort(data["timestamp"])]
+                    )  # Sort counts by timestamp
 
-                # Limit data points displayed
-                if len(self.time_data) > points:
-                    self.counts_data = self.counts_data[-points:]
-                    self.time_data = self.time_data[-points:]
+                    self.time_data.extend(times.tolist())  # Current time for each count
+                    self.counts_data.extend(
+                        values / (meas_len_1 * 1e-9 * 3000)
+                    )  # Convert counts to kcps
 
-                # Calculate rolling average
-                self.rolling_avg_data = [sum(self.counts_data[max(0, i-9):i+1]) / min(10, i+1) for i in range(len(self.counts_data))]
+                    times = np.array(self.time_data)
 
-                time.sleep(0.01)  # Small delay to prevent blocking
+                    # Limit data points displayed
+                    if len(self.time_data) > points:
+                        self.counts_data = self.counts_data[-points:]
+                        self.time_data = self.time_data[-points:]
+
+                    # Calculate rolling average
+                    self.rolling_avg_data = [
+                        sum(self.counts_data[max(0, i - 9) : i + 1]) / min(10, i + 1)
+                        for i in range(len(self.counts_data))
+                    ]
+
+                    time.sleep(0.01)  # Small delay to prevent blocking
+
+                    last_idx = total
+                    last_idx_2 = total_2
