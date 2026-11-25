@@ -30,6 +30,7 @@ from Counter import Counter, SettingsDialogCounter
 from T1 import T1, SettingsDialogT1
 from Hahn_Echo import HahnEcho, SettingsDialogHahnEcho
 from xy8 import XY8, SettingsDialogXY8
+from superposition_sequence import superposition as Superposition, SettingsDialogsuperposition as SettingsDialogSuperposition
 from experiment_base import ExperimentBase
 from styles import MAIN_WINDOW_STYLESHEET, PLOT_WIDGET_BG, get_textbox_palette, get_toolbar_palette
 
@@ -78,6 +79,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setWindowTitle('Hahn Echo (T2) Measurement')
         elif self.experiment == "XY8":
             self.setWindowTitle('XY8 Dynamical Decoupling (T2) Measurement')
+        elif self.experiment == "Superposition":
+            self.setWindowTitle('Superposition Sequence Measurement')
         else:
             self.setWindowTitle('Quantum Measurement')
 
@@ -93,7 +96,7 @@ class MainGui(QtCore.QObject):
         self.running: bool = False
         self.program: ExperimentBase | None = None
         self.settings_dialog = None
-        self.experiments = ["Counter", "Rabi", "ODMR", "T1", "HahnEcho", "XY8"]
+        self.experiments = ["Counter", "Rabi", "ODMR", "T1", "HahnEcho", "XY8", "Superposition"]
         self.classes = {
             "Counter": (Counter, SettingsDialogCounter),
             "Rabi": (Rabi, SettingsDialogRabi),
@@ -101,6 +104,7 @@ class MainGui(QtCore.QObject):
             "T1": (T1, SettingsDialogT1),
             "HahnEcho": (HahnEcho, SettingsDialogHahnEcho),
             "XY8": (XY8, SettingsDialogXY8),
+            "Superposition": (Superposition, SettingsDialogSuperposition),
         }
         # Load the last selected experiment from persistent storage, default to "Rabi"
         self.current_experiment: str = settings.value("current_experiment", "Counter")

@@ -37,6 +37,7 @@ from settings_dialog_base import SettingsDialogBase
 from PyQt6.QtWidgets import QPushButton
 
 
+
 class SettingsDialogXY8(SettingsDialogBase):
     """Settings dialog persisted in QSettings."""
     def __init__(self, parent=None):
@@ -115,7 +116,6 @@ class XY8(ExperimentBase):
                 self.qm.octave.set_rf_output_gain("NV", self.original_rf_gain)
             except Exception as e:
                 print(f"Warning: failed to restore Octave RF gain: {e}")
-
     @staticmethod
     def _xy8_block(tau):
         """A single XY8 block: X - Y - X - Y - Y - X - Y - X, interspersed with waits of `tau`."""
@@ -142,16 +142,15 @@ class XY8(ExperimentBase):
 
         play("x180", "NV")  # 8 X
 
-    def _xy8_n(self, tau, order, rep_counter):
+    def xy8_n(self, tau, order):
+        """Performs the full xy8_n sequence.
+        The first block is outside the loop to avoid delays caused from either the
+        loop or from two consecutive wait commands."""
         self._xy8_block(tau)
-        if order == 1:
-            return
-        if order >= 3:
-            with for_(rep_counter, 0, rep_counter < order - 2, rep_counter + 1):
-                play("gap", "NV", duration=tau)
-                self._xy8_block(tau)
-        play("gap", "NV", duration=tau)
-        self._xy8_block(tau)
+        i = declare(int)
+        with for_(i, 1, i <= order - 1, i + 1):
+            play("gap", "NV", duration=tau)
+            self._xy8_block(tau)
 
     def compile_program(self):
         s = SettingsDialogXY8.get_settings()
@@ -250,7 +249,7 @@ class XY8(ExperimentBase):
                     align()
                     play("x90", "NV")
                     play("gap", "NV", duration=tau_half_spacing)
-                    self._xy8_n(tau_spacing, self.xy8_order, rep_counter)
+                    self.xy8_n(tau_spacing, self.xy8_order)
                     play("gap", "NV", duration=tau_half_spacing)
                     play("x90", "NV")
                     align()  # Play the laser pulse after the XY8 sequence
@@ -265,7 +264,7 @@ class XY8(ExperimentBase):
                     # Second XY8 sequence: x90 - XY8-order block - -x90
                     play("x90", "NV")
                     play("gap", "NV", duration=tau_half_spacing)
-                    self._xy8_n(tau_spacing, self.xy8_order, rep_counter)
+                    self.xy8_n(tau_spacing, self.xy8_order)
                     play("gap", "NV", duration=tau_half_spacing)
                     play("-x90", "NV")
                     align()  # Play the laser pulse after the XY8 sequence
@@ -294,7 +293,7 @@ class XY8(ExperimentBase):
             simulate = False
             if simulate:
                 # Simulates the QUA program for the specified duration
-                simulation_config = SimulationConfig(duration=10_000)  # In clock cycles = 4ns
+                simulation_config = SimulationConfig(duration=80_000)  # In clock cycles = 4ns
                 # Simulate blocks python until the simulation is done
                 job = self.qmm.simulate(config, self.xy8_prog, simulation_config)
                 # Get the simulated samples

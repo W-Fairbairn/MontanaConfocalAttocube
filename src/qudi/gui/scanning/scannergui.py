@@ -802,6 +802,8 @@ class ScannerGui(GuiBase):
     def z_stage_optimisation_update_scan_data(self, opti_data):
         #update z optimisation graph
         self.optimizer_dockwidget.set_plot_data(x=opti_data['x'],y=opti_data['y'],axs='z')
+        if 'peak_x' in opti_data:
+            self.optimizer_dockwidget.set_1d_position(opti_data['peak_x'], 'z')
         return
 
     def z_stage_startup_update_gui(self, curr_pos):

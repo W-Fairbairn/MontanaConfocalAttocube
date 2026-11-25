@@ -13,7 +13,7 @@ from scipy.optimize import curve_fit
 from MontanaConfocalAttocube.QM.configuration import *
 
 # Load data
-f = np.load("../save_dir/2026-11-09/#1537_xy8_153007/arrays.npz")
+f = np.load("../save_dir/2026-11-25/#1556_xy8_123808/arrays.npz")
 t_vec = f["t_vec"]
 counts1 = f["counts1_data"]
 counts1_ref = f["counts1_ref_data"]
@@ -28,6 +28,11 @@ norm2 = counts2 / counts2_ref
 iteration = f["iteration"][0]
 print(iteration)
 
+try:
+    order = f["xy8_order"]
+except:
+    order = 1/4
+
 #norm1 = 1 / norm1
 diff = (norm1 - norm2)
 #norm1 -= (np.max(norm1) - 1)
@@ -36,7 +41,7 @@ diff = (norm1 - norm2)
 # Convert time to ns (8 is the factor: x4 for 4ns clock cycle, x2 for two idle times)
 #x = (8 * t_vec)
 start_idx = 0
-x = (t_vec * 4 * 8 * 10)
+x = (t_vec * 4 * 8 * order)
 diff = diff[start_idx:]
 norm1 = norm1[start_idx:]
 norm2 = norm2[start_idx:]

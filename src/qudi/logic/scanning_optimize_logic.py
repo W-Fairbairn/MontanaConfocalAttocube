@@ -106,6 +106,22 @@ class ScanningOptimizeLogic(LogicBase):
             else:
                 self._scan_sequence = list()
 
+        # Make sure a lone z step is bracketed by an x,y re-centering scan on
+        # both sides, not just after: the z stage can drift the spot off the
+        # sample in x,y while sweeping, so only checking xy afterwards means
+        # the z sweep itself may already have locked onto the wrong feature
+        # (e.g. the substrate surface) with no xy check beforehand to catch it.
+        # This runs every activation (not just when building the default above)
+        # so it also upgrades a sequence already persisted from an older run.
+        if len(self._avail_axes) >= 3:
+            xy_step = (self._avail_axes[0].name, self._avail_axes[1].name)
+            z_step = (self._avail_axes[2].name,)
+            seq = [tuple(step) for step in self._scan_sequence]
+            if z_step in seq:
+                z_idx = seq.index(z_step)
+                if z_idx == 0 or seq[z_idx - 1] != xy_step:
+                    seq.insert(z_idx, xy_step)
+                self._scan_sequence = seq
 
         if self._data_channel is None:
             self._data_channel = tuple(channels.values())[0].name
@@ -355,8 +371,8 @@ class ScanningOptimizeLogic(LogicBase):
                 conn = Client(address, authkey=b'secret password')
                 conn.send(msg)
                 conn.close()
-            except Exception:
-                self.log.exception('Client notify failed')
+            except ConnectionRefusedError:
+                print('Client refused connection')
         threading.Thread(target=worker, daemon=True).start()
 
     def _next_sequence_step(self):
@@ -457,18 +473,19 @@ class ScanningOptimizeLogic(LogicBase):
         """
         # Keep old behavior (including start/stop messaging) but don't unlock the optimizer module.
         try:
-            #self.z_optimize()
-            try:
-                self.sigOptimizeStateChanged.emit(True, {'z': self._z_stage().get_position('z')}, None)
-            except Exception:
+            peak_time = self.z_optimize()
+            # Report the same time-domain peak value z_optimize already used to
+            # retrace, not a get_position() readback: that's unreliable (see
+            # z_optimize's docstring) and in different units (meters) than the
+            # graph's time axis, so it was overwriting the correct marker set
+            # via sigZOptimizeUpdateGraph with a nonsensical position.
+            if peak_time is not None:
+                self.sigOptimizeStateChanged.emit(True, {'z': peak_time}, None)
+            else:
                 self.sigOptimizeStateChanged.emit(True, dict(), None)
         except Exception:
             self.log.exception('Z-stage optimization step failed.')
-            # Emit a failed fit so the GUI can indicate invalid optimization.
-            try:
-                self.sigOptimizeStateChanged.emit(True, {'z': self._z_stage().get_position('z')}, None)
-            except Exception:
-                self.sigOptimizeStateChanged.emit(True, dict(), None)
+            self.sigOptimizeStateChanged.emit(True, dict(), None)
             # Abort sequence on failure.
             self.stop_optimize()
 
@@ -479,37 +496,132 @@ class ScanningOptimizeLogic(LogicBase):
             time.sleep(0.001)
         return np.median(counts)
 
-    def z_optimize(self):
-        y_data = []
-        optimised = False
-        backward = True
-        num_averages = 3
-        i = 0
-        num_steps = 1
-        print("optimising z")
-        while not optimised:
-            i += 1
-            print(i, backward)
-            if backward:
-                self._z_stage().set_voltage('z', 50)
-            else:
-                self._z_stage().set_voltage('z', 50)
-            curr_counts = self.average_counts(num_averages)
-            y_data.append(curr_counts)
-            self._z_stage().step('z', backward)
-            time.sleep(0.05)
-            if self.average_counts(num_averages) < curr_counts:
-                backward = not backward
+    def z_optimize(self, scan_steps=300, step_period_s=0.02, settle_time_s=0.5):
+        """Scan the z piezo stage rapidly in one direction while streaming raw
+        photon counts over time (the same way the live photon counter trace is
+        acquired - repeated get_counts() calls, no position readback), fit the
+        peak in time, then retrace to it.
 
-            x_data = np.linspace(0, len(y_data) - 1, len(y_data))
-            self.sigZOptimizeUpdateGraph.emit({
-                'x': np.array(x_data, dtype=float),
-                'y': np.array(y_data, dtype=float),
-            })
-            if i > 50:
-                optimised = True
+        The stage's position readback (get_position) has turned out to be
+        unreliable: a counts-vs-reported-position trace looks noisy/wrong, while
+        the raw counts-vs-time trace (as seen live on the photon counter) looks
+        like a clean peak. So this never reads back position at all - it just
+        steps the stage at a fixed cadence while recording (elapsed_time,
+        counts), and fits that time trace with the same robust 1D Gaussian fit
+        used elsewhere in this module (_get_pos_from_1d_gauss_fit).
+
+        Since this is a re-optimization, the current position is presumably
+        already close to the peak - scanning only in one direction from there
+        would just show the falling edge once and then flat background for the
+        rest of the range. So first move away (unrecorded) by half the scan
+        range to pre-position at the start of the range, then settle for
+        `settle_time_s` before recording: the time tagger's counter reports a
+        trailing rolling average (currently ~1 s per the configured binwidth *
+        number_of_bins), so if recording starts immediately after a big move,
+        the first samples are stale counts left over from the old position, not
+        the real (now off-peak) level at the new one. Only once that has
+        genuinely dropped does the recorded forward pass begin, sweeping all
+        the way across the range and back through the peak so the fit sees a
+        full peak instead of half of one.
+
+        Forward pass: step `scan_steps` times in one direction, recording
+        (time, counts), and fit the Gaussian to find the time offset of the
+        peak within that pass.
+
+        Retrace pass: step the opposite way back towards that peak. The time
+        offset found above gives an *estimate* of how long that should take,
+        but using it as a blind stopping condition tends to under- or
+        overshoot, because step size is not equal in the two directions (nor
+        reproducible), so elapsed time doesn't correspond 1:1 to the same
+        physical distance in both directions. Instead, the estimate is only
+        used to schedule when to start paying attention: once close to it, the
+        retrace watches live counts and stops once they've clearly risen to
+        (near) the peak level seen in the forward pass and then confirmed
+        dropping again - i.e. it detects arriving at and passing the peak from
+        the actual signal, rather than trusting the timing estimate alone. The
+        timing estimate still bounds the worst case so it can't run away.
+        """
+        self._z_stage().set_voltage('z', 50)
+
+        def timed_scan(backward, n_steps):
+            times = []
+            counts_list = []
+            t0 = time.perf_counter()
+            times.append(0.0)
+            counts_list.append(self._time_tagger().get_counts())
+            for _ in range(n_steps):
+                self._z_stage().step('z', backward)
+                time.sleep(step_period_s)
+                times.append(time.perf_counter() - t0)
+                counts_list.append(self._time_tagger().get_counts())
+                self.sigZOptimizeUpdateGraph.emit({
+                    'x': np.array(times, dtype=float),
+                    'y': np.array(counts_list, dtype=float),
+                })
+            return np.array(times, dtype=float), np.array(counts_list, dtype=float)
+
+        print("rapid z scan: moving to start of scan range")
+        for _ in range(scan_steps // 2):
+            self._z_stage().step('z', True)
+            time.sleep(step_period_s)
+
+        print(f"rapid z scan: settling for {settle_time_s}s before recording")
+        time.sleep(settle_time_s)
+
+        print("rapid z scan: forward pass")
+        t_fwd, y_fwd = timed_scan(backward=False, n_steps=scan_steps)
+
+        (peak_time,), _fit_data, _fit_res = self._get_pos_from_1d_gauss_fit(t_fwd, y_fwd)
+        total_time = float(t_fwd[-1])
+        retrace_time = max(total_time - peak_time, 0.0)
+        print(f"rapid z scan: fitted peak at t={peak_time:.3f}s of {total_time:.3f}s,"
+              f" retracing for {retrace_time:.3f}s")
+
+        # Mark the fitted peak on the (time-based) graph with the vertical
+        # position marker, same units as the plotted x data.
+        self.sigZOptimizeUpdateGraph.emit({
+            'x': t_fwd,
+            'y': y_fwd,
+            'peak_x': peak_time,
+        })
+
+        # Retrace: step the opposite way, using the fitted peak counts level as
+        # live ground truth for when we've actually arrived, rather than
+        # trusting the elapsed-time estimate blindly (never touches
+        # get_position either). No graph updates here; this is just retracing
+        # to the already-found peak, not re-scanning it.
+        peak_level = float(np.max(y_fwd))
+        near_peak_threshold = peak_level - max(0.1 * abs(peak_level), 1.0)
+        confirm_declines = 2
+        max_retrace_time = 2.0 * retrace_time + 2.0
+
+        reached_near_peak = False
+        best_count_seen = -np.inf
+        declines_in_a_row = 0
+
+        t0 = time.perf_counter()
+        t = 0.0
+        while t < max_retrace_time:
+            self._z_stage().step('z', True)
+            time.sleep(step_period_s)
+            t = time.perf_counter() - t0
+            counts = self._time_tagger().get_counts()
+
+            if counts >= near_peak_threshold:
+                reached_near_peak = True
+
+            if reached_near_peak:
+                noise_floor = max(0.02 * best_count_seen, 1.0)
+                if counts > best_count_seen:
+                    best_count_seen = counts
+                    declines_in_a_row = 0
+                elif counts < best_count_seen - noise_floor:
+                    declines_in_a_row += 1
+                    if declines_in_a_row >= confirm_declines:
+                        break
+
         print("finished optimising z")
-        return
+        return peak_time
 
     def run_z_stage_scan_0_3000um(self, step_um=10.0, times_to_avg=3, dwell_time_s=0.0,
                                  start_um=0.0, stop_um=3000.0, reverse=False):
@@ -687,19 +799,24 @@ class ScanningOptimizeLogic(LogicBase):
 
         model = Gaussian()
         try:
-            # Start with model defaults then tighten bounds
-            p0 = model.estimate_peak(y, x)
-            p0['center'] = center0
-            # Build lmfit Parameters from p0 by doing a quick fit with bounds
-            fit_result = model.fit(
-                y,
-                x=x,
-                weights=weights,
-                center=(center0, float(np.min(x)), float(np.max(x))),
-                sigma=(p0.get('sigma', span / 6.0), sigma_min, sigma_max),
-                amplitude=(max(float(np.nanmax(y) - np.nanmedian(y)), 0.0), 0.0, None),
-                offset=(float(np.nanmedian(y)), float(np.nanpercentile(y, 1)), float(np.nanpercentile(y, 99))),
-            )
+            # lmfit's Model.fit() only accepts (value, min, max) tuples as plain
+            # kwargs if you build a proper Parameters object first - passing a
+            # bare tuple as e.g. center=(value, min, max) just gets assigned as
+            # the raw parameter *value*, which then blows up. So build and
+            # bound the Parameters explicitly here, seeding sigma from
+            # estimate_peak's own estimate and center from the smoothed argmax.
+            sigma0 = model.estimate_peak(y, x)['sigma'].value
+
+            params = model.make_params()
+            params['center'].set(value=center0, min=float(np.min(x)), max=float(np.max(x)))
+            params['sigma'].set(value=sigma0, min=sigma_min, max=sigma_max)
+            params['amplitude'].set(value=max(float(np.nanmax(y) - np.nanmedian(y)), 0.0),
+                                    min=0.0, max=None)
+            params['offset'].set(value=float(np.nanmedian(y)),
+                                 min=float(np.nanpercentile(y, 1)),
+                                 max=float(np.nanpercentile(y, 99)))
+
+            fit_result = model.fit(y, params=params, x=x, weights=weights)
         except Exception:
             self.log.exception('1D Gaussian fit unsuccessful; falling back to argmax.')
             return (center0,), None, None

@@ -134,8 +134,6 @@ class ExperimentBase(ABC):
         assign(io2_flag, IO2)
         with while_(io1_flag | io2_flag):  # refocusing loop
             play("laser_ON", "AOM2")
-            wait(wait_for_initialization * u.ns, "AOM2")
-            align()
             assign(io1_flag, IO1)
             assign(io2_flag, IO2)
 
